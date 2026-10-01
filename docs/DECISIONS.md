@@ -144,20 +144,24 @@
 
 ---
 
-## ADR-0008 — Baseline language & tooling (proposed)
-- **Status:** Proposed
+## ADR-0008 — Baseline language & tooling
+- **Status:** Accepted (realized in Phase 1)
 - **Date:** 2026-10-01
 - **Context:** A production-oriented Python project needs a consistent toolchain.
-- **Decision (proposed):** Python ≥ 3.11, `src/` layout with PEP 621
-  `pyproject.toml`, `pydantic` v2 / `pydantic-settings` for config, `pytest`
-  (+`pytest-asyncio`) for tests with real-PostgreSQL integration, `ruff` +
-  `ruff format` + `mypy --strict` for quality.
+- **Decision:** Python ≥ 3.11, `src/` layout with PEP 621 `pyproject.toml`,
+  `pytest` for tests, and `ruff` + `ruff format` + `mypy --strict` for quality.
+  These are realized in Phase 1's `pyproject.toml`. `pydantic` v2 /
+  `pydantic-settings` (config) and `pytest-asyncio` + real-PostgreSQL
+  integration remain the intended choices but are **deferred to the phases that
+  introduce their consumers** — Phase 1 ships zero runtime dependencies
+  (ADR-0012), so no config or async libraries are installed yet.
 - **Alternatives considered:** Python 3.10 (rejected — want modern typing),
   flat layout (rejected — `src/` avoids import-shadowing in tests), dataclasses
   for config (rejected — want validation at the boundary).
 - **Reason:** Mainstream, well-supported, strong typing and validation story.
-- **Consequences:** Finalized when `pyproject.toml` lands in Phase 1; revisit
-  only with cause.
+- **Consequences:** The packaging/quality baseline is now fixed in
+  `pyproject.toml`. Build-backend, version-source, test-layout, CI, and
+  dependency-discipline specifics are recorded separately in ADR-0011…ADR-0015.
 
 ---
 
@@ -195,3 +199,103 @@
   and auditing.
 - **Consequences:** Every stage signature takes the context; exact fields are
   finalized in Phase 1.
+
+---
+
+## ADR-0011 — Hatchling build backend with dynamic version
+- **Status:** Accepted
+- **Date:** 2026-10-01
+- **Context:** The project needs a PEP 517 build backend and a single source of
+  truth for the version. Duplicating the version in both `pyproject.toml` and
+  the package is a classic drift bug.
+- **Decision:** Use **Hatchling** as the build backend and declare the version
+  **dynamic**, sourced from `__version__` in `src/queryshield/__init__.py` via
+  `[tool.hatch.version]`. The in-code literal is authoritative; the built
+  distribution's metadata is derived from it, and a unit test asserts the two
+  agree.
+- **Alternatives considered:** setuptools (more boilerplate for a src-layout
+  dynamic version); flit (fine, but Hatchling's version plugin and build targets
+  are more flexible); hard-coding the version in `pyproject.toml` (rejected —
+  drifts from the importable `__version__`).
+- **Reason:** Minimal config, first-class dynamic-version support, no drift.
+- **Consequences:** `hatchling` is a build-time requirement only, never a
+  runtime dependency. Releasing remains blocked until a license is chosen
+  (ADR-0006).
+
+---
+
+## ADR-0012 — Zero runtime dependencies in Phase 1
+- **Status:** Accepted
+- **Date:** 2026-10-01
+- **Context:** Future phases will need a PostgreSQL driver, a Mistral client, a
+  SQL parser, and a cache client. It is tempting to add them now.
+- **Decision:** Phase 1 declares **`dependencies = []`**. Runtime libraries are
+  added only in the phase that actually consumes them. Development/test tooling
+  (`pytest`, `pytest-cov`, `ruff`, `mypy`) lives under the `dev`
+  optional-dependency group, not as runtime dependencies.
+- **Alternatives considered:** Pre-installing the anticipated stack now —
+  rejected; it installs unused code, invites premature coupling, and would let
+  "the dependency exists" masquerade as "the feature exists." It would also
+  force the still-open SQL-parser choice (ADR-0003) prematurely.
+- **Reason:** Honest dependency surface; nothing is pulled in before it is used.
+- **Consequences:** Installing QueryShield pulls in nothing extra today. Each
+  future phase adds and pins exactly the libraries it introduces, recorded as it
+  happens.
+
+---
+
+## ADR-0013 — Test layout, marker taxonomy, and importlib import mode
+- **Status:** Accepted
+- **Date:** 2026-10-01
+- **Context:** Test structure and pytest import semantics should be fixed early
+  so later phases drop tests into an established convention.
+- **Decision:** Tests live under `tests/`, split into `tests/unit/` and
+  `tests/integration/`. Pytest runs with `--import-mode=importlib` and **no**
+  `__init__.py` files in the test tree, decoupling tests from package import
+  paths and avoiding module-name clashes. `--strict-markers` and
+  `--strict-config` are enabled. A marker taxonomy is registered up front:
+  `unit`, `integration`, `security`, `property`, `e2e`, `performance`.
+  Integration tests must **skip** (not fail) when their external service is
+  absent.
+- **Alternatives considered:** `prepend`/`append` import modes with
+  `__init__.py` packages (rejected — more fragile under a `src/` layout);
+  registering markers lazily (rejected — `--strict-markers` would fail;
+  declaring them now is cheap).
+- **Reason:** A modern, robust pytest setup that scales to the planned
+  security/integration/property suites without rework.
+- **Consequences:** Contributors use the registered markers; CI can select or
+  exclude suites by marker (e.g. `pytest -m "not integration"`).
+
+---
+
+## ADR-0014 — CI scope: quality gate only, no service containers yet
+- **Status:** Accepted
+- **Date:** 2026-10-01
+- **Context:** CI should enforce quality from the first commit, but no code talks
+  to external services yet.
+- **Decision:** A GitHub Actions workflow runs the quality gate — `ruff check`,
+  `ruff format --check`, `mypy`, `pytest` — on Python 3.11, 3.12, and 3.13 after
+  `pip install -e ".[dev]"`. It deliberately provisions **no** PostgreSQL or
+  Redis service and performs **no** build/publish/deploy. Those arrive with the
+  integration tests and release process that need them.
+- **Alternatives considered:** Standing up a PostgreSQL service container now
+  (rejected — nothing uses it, so it would only prove a container can start);
+  a single Python version (rejected — the project targets 3.11–3.13).
+- **Reason:** Enforce quality immediately without pretending integration exists.
+- **Consequences:** A PostgreSQL service job and a release workflow are future
+  additions; the matrix grows when integration jobs land.
+
+---
+
+## ADR-0015 — Defer a CLI / `__main__` entry point
+- **Status:** Accepted
+- **Date:** 2026-10-01
+- **Context:** Python projects often ship a console-script entry point.
+  QueryShield has no user-facing behavior yet.
+- **Decision:** Do **not** add a `[project.scripts]` entry point or a
+  `__main__.py` in Phase 1. Add one only when there is real behavior to invoke,
+  and decide deliberately then between a library-only distribution and a CLI.
+- **Alternatives considered:** Scaffolding a no-op CLI now — rejected; a command
+  that does nothing is fake functionality.
+- **Reason:** No premature surface area; the entry point follows the feature.
+- **Consequences:** QueryShield is a library-only distribution for now.

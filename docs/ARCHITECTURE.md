@@ -1,9 +1,11 @@
 # QueryShield — Architecture
 
-> **Status: Phase 0.** This document describes the **intended** architecture.
-> With the exception of the documentation files themselves, **none of the
-> components below are implemented yet.** Where a distinction matters, planned
-> behavior is called out as *planned*. The live build state is tracked in
+> **Status: Phase 1 (project foundation).** This document describes the
+> **intended** architecture. **None of the pipeline components below are
+> implemented yet** — Phase 1 adds only the installable project skeleton
+> (packaging, tooling, tests, CI), documented in [§11](#11-project-foundation-implemented-in-phase-1).
+> Where a distinction matters, planned behavior is called out as *planned*. The
+> live build state is tracked in
 > [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ---
@@ -229,3 +231,41 @@ runtime surprise.
 - **Prompt/response handling:** candidate SQL may contain hostile content;
   because it is only ever parsed and analyzed (never trusted), this is contained
   by design, but logging/audit must avoid echoing secrets.
+
+---
+
+## 11. Project foundation (implemented in Phase 1)
+
+Everything in §§1–10 is still *planned*. This section documents what the
+repository **actually** contains today, so this document never overstates
+reality.
+
+Phase 1 established an installable, type-checked, testable Python project — and
+nothing more:
+
+- **Packaging:** PEP 621 `pyproject.toml` with the **Hatchling** build backend
+  (ADR-0011). The version is dynamic, sourced from `__version__` in
+  `src/queryshield/__init__.py` (the single source of truth).
+- **Package:** `src/queryshield/` contains only `__init__.py` (exposing
+  `__version__`) and a `py.typed` marker (PEP 561). There is **no**
+  orchestrator, interface, model, or pipeline component yet.
+- **Runtime dependencies:** none (ADR-0012). Dev tooling (`pytest`,
+  `pytest-cov`, `ruff`, `mypy`) is an optional `dev` group.
+- **Tests:** `tests/unit/test_package.py` asserts real packaging invariants
+  (import works, version is well-formed, the in-code version matches the
+  installed distribution metadata, public API is minimal).
+  `tests/integration/` is a documented placeholder for Phase 2 (ADR-0013).
+- **Quality gate:** `ruff` (lint + format) and `mypy --strict`, enforced in CI
+  across Python 3.11–3.13 with no service containers (ADR-0014).
+- **Configuration convention:** `.env.example` documents the environment
+  variables later phases will consume. **No code reads it yet**; the validated
+  configuration model described in [§7](#7-configuration-model-planned) is not
+  implemented.
+
+How this maps onto the target architecture: the foundation is the empty vessel
+for §§1–10. The composition root, the seven interfaces ([§6](#6-major-interfaces-planned)),
+the `RequestContext` ([§5](#5-the-requestcontext-security-principal)), and the
+configuration model ([§7](#7-configuration-model-planned)) are the **next**
+increment (the "core library skeleton"); the deterministic pipeline
+([§§2–4](#2-execution-pipeline)) follows after that. No shortcut has been taken
+that pre-commits any of those designs.

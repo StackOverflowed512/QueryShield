@@ -2,7 +2,7 @@
 
 > **This file is the authoritative source of truth for what actually exists.**
 > If any other document implies a feature works, this file overrides it.
-> Last updated: **2026-10-01** (Phase 0).
+> Last updated: **2026-10-01** (Phase 1 — project foundation).
 
 Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (intentional)
 
@@ -10,34 +10,62 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (inte
 
 ## Current phase
 
-**Phase 0 — Project context & documentation infrastructure.** 🚧 → ✅ on
-completion of this phase.
+**Phase 1 — Project foundation (installable, testable skeleton).** 🚧
 
-Goal: establish the permanent context files and project scaffolding. **No
-QueryShield functionality is implemented in this phase, by design.**
+Phase 0 (context & documentation) is complete and committed. Phase 1
+establishes a professional, installable, testable Python project: packaging,
+test harness, code-quality tooling, and CI. **No QueryShield security/execution
+functionality is implemented in this phase, by design.**
+
+> **⚠️ Validation status (read this before trusting the checkmarks below):**
+> the Phase 1 artifacts have been **written**, but the mandated "actually run
+> the tooling" validation — `pip install -e ".[dev]"`, `pytest`, `ruff check .`,
+> `ruff format --check .`, `mypy` — has **not yet been executed in this
+> environment**, because the sandbox's command-safety classifier is temporarily
+> unavailable (every Bash invocation is refused). Phase 1 is therefore **not**
+> marked ✅ complete; it stays 🚧 until the toolchain has actually run green.
+> This is recorded honestly rather than assumed.
 
 ---
 
 ## Phase checklist
 
-### Phase 0 — Context & documentation infrastructure 🚧
-- [x] Inspect repository (confirmed empty, not a git repo)
+### Phase 0 — Context & documentation infrastructure ✅
+- [x] Inspect repository
 - [x] `CLAUDE.md`
 - [x] `docs/ARCHITECTURE.md`
 - [x] `docs/IMPLEMENTATION_STATUS.md` (this file)
 - [x] `docs/DECISIONS.md`
 - [x] `README.md`
 - [x] `.gitignore` (Python + secrets)
-- [ ] Git repository initialized (left **uncommitted** — awaiting user)
+- [x] Git repository initialized and Phase 0 committed (branch `main`); Phase 1
+      work continues on branch `phase_1`
 
-### Phase 1 — Skeleton, configuration, errors, interfaces ⬜
-- [ ] `pyproject.toml` (PEP 621), `src/queryshield/` layout, tooling config
+### Phase 1 — Project foundation 🚧 (artifacts built; validation pending)
+
+**1a. Installable, testable project foundation** — this task's deliverable.
+- [x] `pyproject.toml` (PEP 621) with Hatchling build backend + dynamic version
+- [x] `src/queryshield/` package: `__init__.py` (single-source `__version__`)
+      and `py.typed` (PEP 561) — **metadata only, no functionality**
+- [x] Test harness: `tests/unit/test_package.py` (real tests), an
+      `tests/integration/` placeholder doc, pytest config + marker taxonomy
+- [x] Code quality: `ruff` (lint + format) and `mypy --strict` configured
+- [x] CI (`.github/workflows/ci.yml`): lint, format-check, type-check, tests on
+      Python 3.11 / 3.12 / 3.13 — no database service yet
+- [x] `.env.example` documenting future configuration (placeholders only;
+      nothing reads it yet)
+- [ ] **Toolchain validated by actually running it** — blocked; see the
+      Validation status note under *Current phase*
+
+**1b. Core library skeleton** — ⬜ not started (the immediate next task).
+Deliberately excluded from 1a so that no unused abstraction is created before it
+has a consumer (per the Phase 1 task's "no premature functionality" rule).
 - [ ] Validated configuration model + precedence (defaults→file→env→context)
 - [ ] Typed error hierarchy (`QueryShieldError` + subclasses)
 - [ ] Structured logging setup
 - [ ] Abstract interfaces: `LLMProvider`, `DatabaseAdapter`, `SchemaRetriever`,
       `CacheBackend`, `PolicyRule`/`PolicyEngine`, `AuditStore`, `EventPublisher`
-- [ ] `RequestContext` and core typed models (stubs with contracts)
+- [ ] `RequestContext` and core typed models
 - [ ] Unit tests for config validation & error types
 
 ### Phase 2 — Database adapter & schema retrieval ⬜
@@ -102,35 +130,62 @@ QueryShield functionality is implemented in this phase, by design.**
 
 ## Implemented modules
 
-**None.** No Python package exists yet (`src/queryshield/` is planned for
-Phase 1).
+- `queryshield` (`src/queryshield/__init__.py`) — package root. Exposes **only**
+  `__version__` (currently `0.1.0`) and a `py.typed` marker. No security,
+  database, LLM, parsing, caching, execution, audit, or configuration code
+  exists yet, by design.
+
+No other modules exist. Every functional component described in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is still unimplemented.
 
 ## Tests implemented
 
-**None.** The test suite begins in Phase 1.
+- `tests/unit/test_package.py` — verifies the package imports, that
+  `__version__` is a well-formed non-empty dotted string, that the in-code
+  version matches the installed distribution metadata (proving the
+  dynamic-version packaging is wired correctly), and that the public API is
+  minimal. These assert real invariants, **not** placeholder `assert True`.
+- `tests/integration/` — README/placeholder only; real integration tests
+  (requiring a live PostgreSQL) arrive in Phase 2.
+
+> These tests have been **written** but **not yet executed** in this
+> environment (see the Validation status note). Do not read their presence as a
+> passing run until the suite has actually been run.
 
 ---
 
-## Known limitations (as of Phase 0)
+## Known limitations (as of Phase 1)
 
-- The repository contains documentation and scaffolding only; there is no
-  runnable code, no dependencies, and no tests.
-- No `pyproject.toml`, so the project is not yet installable.
-- The SQL parsing library is not finalized (ADR-0003, open).
-- Git is not initialized by this phase's automation; the user will commit.
+- The repository contains the project **foundation only**: an installable,
+  type-checked, testable skeleton. There is **no** QueryShield functionality —
+  no configuration loader, errors, logging, interfaces, DB/LLM/cache
+  integration, SQL parsing, policy engine, rewriting, cost checks, execution,
+  audit, or API.
+- The package exposes only its version.
+- Phase 1 validation (running the toolchain) has **not** been executed in this
+  environment yet (Bash command-safety classifier unavailable), so the
+  install/lint/type/test results are unverified here.
+- The SQL parsing library is still not finalized (ADR-0003, open).
+- `.env.example` is documentation only; no code reads environment variables yet.
 
 ## Technical debt
 
-- None accrued yet (no code).
+- None accrued. The only code is package metadata and its tests.
 
 ## Intentionally deferred (⏸️)
 
-- **All QueryShield functionality** — deferred to Phase 1+ by the explicit scope
-  of Phase 0.
-- **Source skeleton / `pyproject.toml`** — deferred to Phase 1 to keep Phase 0
-  strictly documentation (ADR-0005).
+- **Core library skeleton** (configuration model, error hierarchy, logging,
+  interfaces, `RequestContext`) — deferred to the next task (Phase 1b) so that
+  no unused abstraction is created before it has a consumer.
+- **All QueryShield security/execution functionality** — Phases 2–11.
+- **Runtime dependencies** (PostgreSQL driver, Mistral client, SQL parser,
+  Redis) — not added in Phase 1; each is introduced only in the phase that
+  actually needs it (ADR-0014).
+- **CLI / `__main__` entry point** — deferred until there is behavior to expose
+  (ADR-0016).
 - **LICENSE / open-source license selection** — deferred to the repository
-  owner; a license is a legal decision QueryShield will not invent (ADR-0006).
-- **CI configuration** — deferred until there is code and a test suite to run.
+  owner; `pyproject.toml` omits the `license` field accordingly (ADR-0006).
+- **PostgreSQL (and other service) jobs in CI** — deferred until integration
+  tests exist that need them (ADR-0015).
 - **Local/offline LLM inference (Ollama etc.)** — out of scope unless a future
-  phase explicitly requests it.
+  phase explicitly requests it (ADR-0009).

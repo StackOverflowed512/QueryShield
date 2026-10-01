@@ -1,0 +1,122 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "queryshield"
+dynamic = ["version"]
+description = "Secure, auditable text-to-SQL infrastructure for PostgreSQL."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "QueryShield contributors" }]
+keywords = [
+    "sql",
+    "postgresql",
+    "security",
+    "text-to-sql",
+    "llm",
+    "governance",
+    "audit",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+
+# Phase 1 has ZERO runtime dependencies on purpose (see ADR-0014). Runtime
+# dependencies (PostgreSQL driver, Mistral client, SQL parser, cache, etc.) are
+# introduced only in the phase that actually needs them.
+dependencies = []
+
+[project.optional-dependencies]
+# Development/test tooling only. Installed via: pip install -e ".[dev]"
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+# NOTE:
+# - `license` is intentionally omitted: license selection is deferred to the
+#   repository owner (ADR-0006). A placeholder license would be misleading.
+# - `project.urls` is intentionally omitted: no canonical homepage/repository
+#   URL is established yet, and fabricating one would be wrong. Add it once the
+#   project has a published home.
+
+# ----------------------------------------------------------------------------
+# Build backend: version is the single source of truth in the package __init__.
+# ----------------------------------------------------------------------------
+[tool.hatch.version]
+path = "src/queryshield/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/queryshield"]
+
+# ----------------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config --import-mode=importlib"
+markers = [
+    "unit: fast, isolated unit tests (the default in Phase 1)",
+    "integration: requires external services such as a real PostgreSQL (Phase 2+)",
+    "security: security-focused tests (adversarial inputs, deny paths)",
+    "property: property-based tests",
+    "e2e: full end-to-end pipeline tests",
+    "performance: performance / benchmark tests",
+]
+
+[tool.coverage.run]
+source = ["queryshield"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+# ----------------------------------------------------------------------------
+# Lint & format (Ruff)
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["queryshield"]
+
+# ----------------------------------------------------------------------------
+# Type checking (mypy, strict)
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+files = ["src", "tests"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
