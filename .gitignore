@@ -1,0 +1,79 @@
+# ---- Secrets & environment (never commit) ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ---- Testing / coverage / type-checking ----
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.hypothesis/
+
+# ---- Packaging / build backends ----
+pip-wheel-metadata/
+.pdm-python
+.pdm-build/
+__pypackages__/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Logs & local data ----
+*.log
+logs/
+*.sqlite3
+*.db
+
+# ---- Docker / local infra overrides ----
+docker-compose.override.yml
