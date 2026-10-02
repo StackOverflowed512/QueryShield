@@ -9,12 +9,20 @@
 
 ## Current status (read carefully)
 
-**Phase: 0 — Project context & documentation infrastructure.**
+**Phase: 1 — Project foundation (installable, testable skeleton).**
 
-**No functional code exists yet.** As of this writing the repository contains
-*only* documentation and project scaffolding. Nothing in this file or in
-`docs/` should be read as a claim that a described component already works.
-Everything functional is **planned**, not implemented.
+**No functional QueryShield code exists yet.** Phase 0 (documentation) is
+complete and committed; Phase 1 adds the *project foundation* — packaging
+(`pyproject.toml` + `src/queryshield/`), a test harness, `ruff`/`mypy`
+tooling, and CI — but **no** security/execution behavior. The package exposes
+only its version. Nothing in this file or in `docs/` should be read as a claim
+that a described functional component already works; everything in the
+pipeline is still **planned**, not implemented.
+
+> **Validation note:** the Phase 1 toolchain has been configured but not yet
+> *executed* in this environment (the sandbox's Bash command-safety classifier
+> is temporarily unavailable). See the Validation status in
+> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 The authoritative, always-current status is
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). When this
@@ -113,21 +121,24 @@ PostgreSQL → Result → Audit/Analytics
 These are the **intended** choices for the implementation phases. Items marked
 "proposed" are reasonable defaults that may be revisited; items marked "open"
 are explicitly undecided and tracked in [`docs/DECISIONS.md`](docs/DECISIONS.md).
-**None of these dependencies are installed or pinned yet** — there is no
-`pyproject.toml` in Phase 0.
+As of Phase 1 the **tooling** choices are adopted and pinned in `pyproject.toml`
+(Python ≥ 3.11, `src/` layout, Hatchling, `pytest`, `ruff`, `mypy`). The
+**runtime** choices (config, SQL parser, PG driver, LLM client, cache, HTTP API)
+are **not** installed yet — Phase 1 has **zero runtime dependencies** by design,
+and each runtime library is introduced only in the phase that needs it.
 
 | Concern              | Intended choice                                   | Firmness |
 |----------------------|---------------------------------------------------|----------|
-| Language             | Python ≥ 3.11                                     | proposed |
-| Packaging / layout   | `pyproject.toml` (PEP 621), `src/` layout         | proposed |
+| Language             | Python ≥ 3.11                                     | adopted  |
+| Packaging / layout   | `pyproject.toml` (PEP 621), `src/` layout, Hatchling | adopted |
 | Config & validation  | `pydantic` v2 / `pydantic-settings`               | proposed |
 | SQL parsing / AST    | `sqlglot` vs `pglast` (libpg_query)               | **open** |
 | PostgreSQL driver    | `asyncpg` and/or `psycopg` 3                      | proposed |
 | LLM client           | Mistral official SDK / HTTP; key from env         | proposed |
 | Cache                | Redis (`redis-py`) + in-memory default            | proposed |
 | HTTP API (optional)  | FastAPI, wrapping the library core                | proposed |
-| Testing              | `pytest`, `pytest-asyncio`, real PostgreSQL via containers | proposed |
-| Lint / type / format | `ruff`, `mypy` (strict), `ruff format`            | proposed |
+| Testing              | `pytest` (+`pytest-cov`); `pytest-asyncio` & real PostgreSQL via containers later | `pytest` adopted |
+| Lint / type / format | `ruff`, `mypy` (strict), `ruff format`            | adopted  |
 | Logging              | Structured logs (JSON-capable)                    | proposed |
 
 **Hard constraint:** the LLM integration targets the **Mistral API via an API
@@ -229,15 +240,29 @@ planned vs. implemented explicitly.
 
 See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 current (real) tree and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-**planned** `src/queryshield/` package layout. In Phase 0 the repository is:
+**planned** `src/queryshield/` package layout. As of Phase 1 the repository is:
 
 ```
 QueryShield/
 ├── CLAUDE.md
 ├── README.md
+├── pyproject.toml
 ├── .gitignore
-└── docs/
-    ├── ARCHITECTURE.md
-    ├── IMPLEMENTATION_STATUS.md
-    └── DECISIONS.md
+├── .env.example
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── IMPLEMENTATION_STATUS.md
+│   └── DECISIONS.md
+├── src/
+│   └── queryshield/
+│       ├── __init__.py        # exposes __version__ only — no functionality
+│       └── py.typed           # PEP 561 typing marker
+└── tests/
+    ├── unit/
+    │   └── test_package.py
+    └── integration/
+        └── README.md          # placeholder; real integration tests in Phase 2
 ```

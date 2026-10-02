@@ -8,14 +8,15 @@ PostgreSQL database that *executes* it. It exists to close the gap between "an
 LLM can write SQL" and "it is safe to run LLM-written SQL against a production
 database."
 
-> ### ⚠️ Project status: Phase 0 — scaffolding only
+> ### ⚠️ Project status: Phase 1 — project foundation (no pipeline yet)
 >
-> **QueryShield is not yet implemented.** This repository currently contains
-> **documentation and project context only** — there is no runnable code, no
-> package to install, and no tests. The documents below describe the *intended*
-> architecture and clearly separate what is planned from what exists (nothing,
-> functionally, yet). Track real progress in
-> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+> This repository currently contains an **installable, type-checked, testable
+> project skeleton** plus its **documentation** — **not** the QueryShield
+> security/execution pipeline. The installed package exposes only its version.
+> Everything in the architecture described below is **planned**; track what
+> actually exists in
+> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md), which is the
+> authoritative source of truth.
 
 ## Core idea
 
@@ -44,6 +45,70 @@ Cost/Complexity → Secure Cache → PostgreSQL → Result → Audit/Analytics
   `SchemaRetriever`, `CacheBackend`, `PolicyRule`, `AuditStore`,
   `EventPublisher`.
 
+## Status at a glance
+
+**Implemented (Phase 1 — foundation only):**
+
+- Installable Python package exposing `queryshield.__version__` (and nothing else).
+- `src/` layout, PEP 621 `pyproject.toml`, Hatchling build backend with a
+  dynamic version sourced from the package.
+- Test-suite foundation (`pytest`): real unit tests plus an integration-test
+  placeholder, with a registered marker taxonomy.
+- Lint + format (`ruff`) and strict typing (`mypy --strict`).
+- GitHub Actions CI across Python 3.11 / 3.12 / 3.13.
+- **Zero runtime dependencies.**
+
+**Not implemented yet (planned):** schema retrieval, the Mistral LLM provider,
+SQL parsing/AST, the deterministic policy engine, query rewriting/validation,
+cost/complexity checks, the secure cache, PostgreSQL execution, audit/analytics,
+and any HTTP API — plus the configuration model, error hierarchy, logging, and
+the core interfaces / `RequestContext`. See
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+
+## Requirements
+
+- Python ≥ 3.11
+
+## Development setup
+
+```bash
+# from the repository root
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+This installs QueryShield in editable mode together with the development tools
+(`pytest`, `pytest-cov`, `ruff`, `mypy`). There are no runtime dependencies.
+
+## Common tasks
+
+```bash
+pytest                   # run the test suite
+ruff check .             # lint
+ruff format --check .    # verify formatting (drop --check to apply)
+mypy                     # strict type checking
+```
+
+Configuration for all of these lives in `pyproject.toml`.
+
+## Project layout
+
+```
+src/queryshield/     # the package (currently: __version__ + py.typed only)
+tests/unit/          # fast, isolated unit tests
+tests/integration/   # placeholder; real PostgreSQL-backed tests arrive in Phase 2
+docs/                # architecture, status, and decision records
+.github/workflows/   # continuous integration
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` to see the environment variables that later phases
+are expected to consume. **Nothing reads these yet** — the configuration layer
+is not implemented. Never commit real secrets; `.env` is git-ignored.
+
 ## Documentation
 
 | Document | Purpose |
@@ -53,14 +118,16 @@ Cost/Complexity → Secure Cache → PostgreSQL → Result → Audit/Analytics
 | [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) | Authoritative checklist of what is done, planned, and deferred. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture Decision Records. |
 
-## Technology (intended)
+## Technology
 
-Python ≥ 3.11 · PostgreSQL · Mistral API (hosted, via API key) · Redis
-(optional) · pydantic · pytest. See
-[`docs/DECISIONS.md`](docs/DECISIONS.md) for firmness and open choices (e.g.,
-the SQL parsing library is not yet finalized).
+Python ≥ 3.11 · Hatchling · pytest · ruff · mypy (adopted in Phase 1). ·
+PostgreSQL · Mistral API (hosted, via API key) · Redis (optional) · pydantic
+(intended for later phases). See [`docs/DECISIONS.md`](docs/DECISIONS.md) for
+firmness and open choices — notably, the SQL parsing library is not yet
+finalized (ADR-0003).
 
 ## License
 
 **To be decided** by the repository owner — see ADR-0006 in
-[`docs/DECISIONS.md`](docs/DECISIONS.md). No license is applied yet.
+[`docs/DECISIONS.md`](docs/DECISIONS.md). No license is applied yet, so the
+package is not published/distributable until one is chosen.
