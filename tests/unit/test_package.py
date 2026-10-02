@@ -40,5 +40,5 @@ def test_in_code_version_matches_distribution_metadata() -> None:
 
 
 def test_public_api_is_minimal() -> None:
-    # Phase 1 intentionally exposes nothing but the version.
+
     assert queryshield.__all__ == ["__version__"]
