@@ -246,7 +246,12 @@ def _build_connect_kwargs(config: DatabaseConfig) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"connect_timeout": max(1, round(config.connect_timeout))}
     options: list[str] = []
     if config.statement_timeout is not None:
-        options.append(f"-c statement_timeout={int(config.statement_timeout * 1000)}")
+        # A positive timeout must never truncate to 0: PostgreSQL reads
+        # statement_timeout=0 as "no limit", which would silently disable the
+        # control (fail-open). Round to the nearest millisecond with a 1 ms
+        # floor, mirroring the connect_timeout handling above.
+        timeout_ms = max(1, round(config.statement_timeout * 1000))
+        options.append(f"-c statement_timeout={timeout_ms}")
     if options:
         kwargs["options"] = " ".join(options)
     if config.sslmode is not None:
