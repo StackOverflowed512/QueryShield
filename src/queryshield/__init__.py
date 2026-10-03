@@ -1,21 +1,50 @@
 """QueryShield — secure, auditable text-to-SQL infrastructure for PostgreSQL.
 
-This is the **Phase 1 (foundation)** package. No security, database, LLM, SQL
-parsing, or execution functionality is implemented yet; see
-``docs/IMPLEMENTATION_STATUS.md`` for the roadmap and
+**Phase 2** adds the configuration foundation and the database abstraction plus a
+real PostgreSQL adapter. The deterministic security pipeline (SQL parsing/AST,
+policy engine, rewriting, cost checks), schema introspection/retrieval, the
+Mistral provider, caching, and audit are still **not** implemented — see
+``docs/IMPLEMENTATION_STATUS.md`` for the authoritative status and
 ``docs/ARCHITECTURE.md`` for the intended design.
 
-The package intentionally exposes only its version metadata at this stage. It
-does **not** define a ``QueryShield`` orchestrator, policy engine, database
-adapter, or any other future component — those are added in later phases.
+The public API is intentionally small: the validated configuration model and its
+loader, and the typed error hierarchy. The database adapter lives under
+:mod:`queryshield.db` because it is a lower-level, *trusted* executor (see the
+trust boundary in ``docs/ARCHITECTURE.md``), not a user-facing query API.
 """
 
 from __future__ import annotations
 
-__all__ = ["__version__"]
+import logging
 
-#: Single source of truth for the package version. The build backend
-#: (Hatchling) reads this literal at build time — see ``[tool.hatch.version]``
-#: in ``pyproject.toml`` — so the installed distribution's metadata and this
-#: value never drift.
-__version__ = "0.1.0"
+from queryshield.config import DatabaseConfig, QueryShieldConfig, load_config
+from queryshield.errors import (
+    ConfigError,
+    DatabaseConnectionError,
+    DatabaseError,
+    DatabaseExecutionError,
+    QueryShieldError,
+)
+
+__all__ = [
+    "ConfigError",
+    "DatabaseConfig",
+    "DatabaseConnectionError",
+    "DatabaseError",
+    "DatabaseExecutionError",
+    "QueryShieldConfig",
+    "QueryShieldError",
+    "__version__",
+    "load_config",
+]
+
+#: Single source of truth for the package version. The build backend (Hatchling)
+#: reads this literal at build time — see ``[tool.hatch.version]`` in
+#: ``pyproject.toml`` — so the installed distribution's metadata and this value
+#: never drift.
+__version__ = "0.2.0"
+
+# Library best practice: attach a no-op handler so importing QueryShield never
+# emits "No handlers could be found" warnings and never configures logging on the
+# application's behalf. Applications opt in by configuring their own handlers.
+logging.getLogger("queryshield").addHandler(logging.NullHandler())

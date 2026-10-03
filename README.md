@@ -8,13 +8,15 @@ PostgreSQL database that *executes* it. It exists to close the gap between "an
 LLM can write SQL" and "it is safe to run LLM-written SQL against a production
 database."
 
-> ### ⚠️ Project status: Phase 1 — project foundation (no pipeline yet)
+> ### ⚠️ Project status: Phase 2 — configuration system + PostgreSQL adapter foundation
 >
-> This repository currently contains an **installable, type-checked, testable
-> project skeleton** plus its **documentation** — **not** the QueryShield
-> security/execution pipeline. The installed package exposes only its version.
-> Everything in the architecture described below is **planned**; track what
-> actually exists in
+> This repository implements **two foundations** so far: a typed, validated
+> **configuration system** and a **PostgreSQL database adapter** (pooled, with a
+> real health check, read-only-by-default transactions, and parameterised
+> execution), plus the typed error hierarchy and logging they need. The rest of
+> the architecture below — schema retrieval, the LLM, SQL parsing, the policy
+> engine, rewriting, cost checks, caching, execution of arbitrary user/LLM SQL,
+> audit, and the HTTP API — is still **planned**. Track what actually exists in
 > [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md), which is the
 > authoritative source of truth.
 
@@ -47,22 +49,27 @@ Cost/Complexity → Secure Cache → PostgreSQL → Result → Audit/Analytics
 
 ## Status at a glance
 
-**Implemented (Phase 1 — foundation only):**
+**Implemented so far:**
 
-- Installable Python package exposing `queryshield.__version__` (and nothing else).
-- `src/` layout, PEP 621 `pyproject.toml`, Hatchling build backend with a
-  dynamic version sourced from the package.
-- Test-suite foundation (`pytest`): real unit tests plus an integration-test
-  placeholder, with a registered marker taxonomy.
-- Lint + format (`ruff`) and strict typing (`mypy --strict`).
-- GitHub Actions CI across Python 3.11 / 3.12 / 3.13.
-- **Zero runtime dependencies.**
+- *Phase 1 — foundation:* installable `src/`-layout package (PEP 621
+  `pyproject.toml`, Hatchling dynamic version), `pytest` harness with a marker
+  taxonomy, `ruff` + `mypy --strict`, and GitHub Actions CI across Python
+  3.11 / 3.12 / 3.13.
+- *Phase 2 — configuration:* typed, validated config (`pydantic` v2) with a
+  deterministic loader — precedence **overrides > env (`QUERYSHIELD_*`) > YAML
+  file > defaults** — fail-closed validation, and `SecretStr` secrets that never
+  leak into logs or errors.
+- *Phase 2 — database:* a vendor-neutral `DatabaseAdapter` abstraction and a
+  `PostgreSQLAdapter` (psycopg 3 + `psycopg_pool`, async): connection pooling, a
+  real health check, read-only-by-default transactions, parameterised execution,
+  clean shutdown, and driver errors mapped to a typed hierarchy without leaking
+  credentials. Integration tests run against a real PostgreSQL (a `postgres:16`
+  service container in CI).
 
 **Not implemented yet (planned):** schema retrieval, the Mistral LLM provider,
 SQL parsing/AST, the deterministic policy engine, query rewriting/validation,
-cost/complexity checks, the secure cache, PostgreSQL execution, audit/analytics,
-and any HTTP API — plus the configuration model, error hierarchy, logging, and
-the core interfaces / `RequestContext`. See
+cost/complexity checks, the secure cache, execution of arbitrary user/LLM SQL,
+audit/analytics, the HTTP API, and `RequestContext`. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 ## Requirements
@@ -80,34 +87,69 @@ python -m pip install -e ".[dev]"
 ```
 
 This installs QueryShield in editable mode together with the development tools
-(`pytest`, `pytest-cov`, `ruff`, `mypy`). There are no runtime dependencies.
+(`pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`). Runtime dependencies
+(`pydantic`, `PyYAML`, `psycopg`) are pulled in automatically.
 
 ## Common tasks
 
 ```bash
-pytest                   # run the test suite
-ruff check .             # lint
-ruff format --check .    # verify formatting (drop --check to apply)
-mypy                     # strict type checking
+pytest -m "not integration"   # fast unit tests (no database needed)
+ruff check .                  # lint
+ruff format --check .         # verify formatting (drop --check to apply)
+mypy                          # strict type checking
 ```
 
 Configuration for all of these lives in `pyproject.toml`.
 
+### Integration tests (real PostgreSQL)
+
+The database adapter is tested against a **real, disposable** PostgreSQL. These
+tests **skip** unless `QUERYSHIELD_TEST_DATABASE_URL` points at one, so they
+never touch a developer's personal database.
+
+```bash
+# start a throwaway PostgreSQL (removed on stop)
+docker run --rm -d --name queryshield-pg \
+  -e POSTGRES_USER=queryshield_test \
+  -e POSTGRES_PASSWORD=queryshield_test \
+  -e POSTGRES_DB=queryshield_test \
+  -p 5432:5432 postgres:16
+
+export QUERYSHIELD_TEST_DATABASE_URL=postgresql://queryshield_test:queryshield_test@localhost:5432/queryshield_test
+pytest -m integration
+
+docker stop queryshield-pg    # tear it down
+```
+
+CI runs the same tests automatically against a `postgres:16` service container.
+
 ## Project layout
 
 ```
-src/queryshield/     # the package (currently: __version__ + py.typed only)
-tests/unit/          # fast, isolated unit tests
-tests/integration/   # placeholder; real PostgreSQL-backed tests arrive in Phase 2
-docs/                # architecture, status, and decision records
-.github/workflows/   # continuous integration
+src/queryshield/       # the package
+├── __init__.py        #   version + curated public API (config + errors)
+├── errors.py          #   typed exception hierarchy
+├── config.py          #   pydantic config models + load_config()
+└── db/                #   DatabaseAdapter abstraction + PostgreSQLAdapter
+tests/unit/            # fast, isolated unit tests (no database)
+tests/integration/     # real PostgreSQL-backed adapter tests
+docs/                  # architecture, status, and decision records
+.github/workflows/     # continuous integration
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` to see the environment variables that later phases
-are expected to consume. **Nothing reads these yet** — the configuration layer
-is not implemented. Never commit real secrets; `.env` is git-ignored.
+QueryShield is configured through `pydantic`-validated settings loaded by
+`queryshield.load_config()`. Values are resolved with a deterministic precedence
+— **explicit overrides > environment variables > YAML file > built-in safe
+defaults** — and validation is **fail-closed**: an invalid or security-relevant
+bad value raises a structured `ConfigError` rather than being silently ignored.
+
+Environment variables use the `QUERYSHIELD_` prefix with `__` for nesting (e.g.
+`QUERYSHIELD_DATABASE__URL`). The database URL is held as a secret and never
+appears in logs or error messages. Copy `.env.example` to `.env` to see every
+supported variable with safe-default annotations. Never commit real secrets;
+`.env` is git-ignored.
 
 ## Documentation
 
@@ -120,11 +162,11 @@ is not implemented. Never commit real secrets; `.env` is git-ignored.
 
 ## Technology
 
-Python ≥ 3.11 · Hatchling · pytest · ruff · mypy (adopted in Phase 1). ·
-PostgreSQL · Mistral API (hosted, via API key) · Redis (optional) · pydantic
-(intended for later phases). See [`docs/DECISIONS.md`](docs/DECISIONS.md) for
-firmness and open choices — notably, the SQL parsing library is not yet
-finalized (ADR-0003).
+Python ≥ 3.11 · Hatchling · pytest (+pytest-asyncio) · ruff · mypy · **pydantic
+v2** · **PyYAML** · **psycopg 3** (+`psycopg_pool`) — all adopted · PostgreSQL ·
+Mistral API (hosted, via API key) · Redis (optional) — introduced in later
+phases. See [`docs/DECISIONS.md`](docs/DECISIONS.md) for firmness and open
+choices — notably, the SQL parsing library is not yet finalized (ADR-0003).
 
 ## License
 

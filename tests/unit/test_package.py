@@ -39,6 +39,26 @@ def test_in_code_version_matches_distribution_metadata() -> None:
     assert importlib.metadata.version("queryshield") == queryshield.__version__
 
 
-def test_public_api_is_minimal() -> None:
-    # Phase 1 intentionally exposes nothing but the version.
-    assert queryshield.__all__ == ["__version__"]
+def test_public_api_is_curated_and_small() -> None:
+    # Phase 2 exposes the config model/loader and the error hierarchy — and
+    # nothing more. The database adapter is deliberately NOT a top-level export
+    # (it lives under ``queryshield.db`` as a lower-level, trusted component).
+    expected = {
+        "__version__",
+        "QueryShieldConfig",
+        "DatabaseConfig",
+        "load_config",
+        "QueryShieldError",
+        "ConfigError",
+        "DatabaseError",
+        "DatabaseConnectionError",
+        "DatabaseExecutionError",
+    }
+    assert set(queryshield.__all__) == expected
+    assert "PostgreSQLAdapter" not in queryshield.__all__
+    assert not hasattr(queryshield, "PostgreSQLAdapter")
+
+
+def test_every_exported_name_is_resolvable() -> None:
+    for name in queryshield.__all__:
+        assert hasattr(queryshield, name), name

@@ -1,11 +1,17 @@
 # QueryShield — Architecture
 
-> **Status: Phase 1 (project foundation).** This document describes the
-> **intended** architecture. **None of the pipeline components below are
-> implemented yet** — Phase 1 adds only the installable project skeleton
-> (packaging, tooling, tests, CI), documented in [§11](#11-project-foundation-implemented-in-phase-1).
-> Where a distinction matters, planned behavior is called out as *planned*. The
-> live build state is tracked in
+> **Status: Phase 2 (configuration system + PostgreSQL adapter foundation).**
+> This document describes the **intended** end-state architecture. Two
+> foundations are now implemented — the **configuration system**
+> ([§7](#7-configuration-system-implemented-in-phase-2)) and the **database
+> abstraction + PostgreSQL adapter**
+> ([§12](#12-phase-2-implementation-configuration-and-database-layer)), together
+> with the typed error hierarchy and a library logging handler. **The pipeline
+> components in §§1–6 and §§8–10 are still not implemented**: no schema
+> retrieval, LLM provider, SQL parsing/AST, policy engine, rewriter, cost
+> checks, secure cache, query execution for arbitrary user SQL, or audit. Where
+> a distinction matters, planned behavior is called out as *planned*. The live
+> build state is tracked in
 > [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ---
@@ -77,10 +83,20 @@ flowchart TD
 | **Rewriter / Validator** | Applies deterministic, policy-mandated transforms (e.g., enforced `LIMIT`, tenant predicates) and **re-parses** to confirm invariants. | Trusted |
 | **Cost / Complexity Checks** | Static complexity analysis plus optional planner cost via `EXPLAIN` (never `EXPLAIN ANALYZE`), compared to configured thresholds. | Trusted |
 | **CacheBackend** (`RedisCache` / `InMemoryCache`) | Stores/returns results under a **principal-partitioned** key with a configurable TTL. | Trusted, isolated |
-| **DatabaseAdapter** (`PostgreSQLAdapter`) | Executes validated SQL under a principal-mapped, least-privilege role in a read-only transaction with a `statement_timeout`. | Trusted gateway to authoritative layer |
+| **DatabaseAdapter** (`PostgreSQLAdapter`) | Executes already-validated SQL inside a transaction (**read-only by default**) with a configurable `statement_timeout`, through a pooled connection. *(Implemented — Phase 2. Principal→least-privilege-role mapping is planned; Phase 2 connects as the single configured DSN role.)* | Trusted gateway to authoritative layer |
 | **PostgreSQL** | Final enforcement: roles, grants, RLS. | **Authoritative** |
 | **AuditStore** | Persists append-only, structured audit records (incl. denials/errors). | Trusted |
 | **EventPublisher** | Emits pipeline events to downstream analytics/streaming sinks. | Trusted |
+
+> **Implemented as of Phase 2:** only the **DatabaseAdapter**
+> (`PostgreSQLAdapter`), the **configuration system** ([§7](#7-configuration-system-implemented-in-phase-2)),
+> the typed **error hierarchy**, and a library **logging** handler. The adapter
+> is the *trusted executor* of already-validated SQL — it deliberately does
+> **not** decide whether a query is authorized; that is the job of the (still
+> unimplemented) parser, policy engine, and rewriter. See
+> [§12](#12-phase-2-implementation-configuration-and-database-layer) and the
+> trust-boundary docstring in `src/queryshield/db/base.py`. Every other
+> component in this table is still *planned*.
 
 ---
 
@@ -152,7 +168,7 @@ implementation phases.*)
 
 ---
 
-## 6. Major interfaces (planned)
+## 6. Major interfaces (planned unless marked implemented)
 
 Concrete implementations named in parentheses are the intended first ones; the
 core depends only on the abstractions.
@@ -161,8 +177,13 @@ core depends only on the abstractions.
   *(MistralProvider)*
 - **`SchemaRetriever`** → `get_schema(ctx) -> SchemaView` (access-filtered,
   versioned, cacheable)
-- **`DatabaseAdapter`** → connection/role management + `execute(validated_sql, ctx)`
-  and `explain(validated_sql, ctx)` *(PostgreSQLAdapter)*
+- **`DatabaseAdapter`** *(implemented — `PostgreSQLAdapter`)* → async lifecycle
+  `open()` / `close()` (also usable as an async context manager),
+  `health_check()`, `transaction(*, read_only=True)` yielding a
+  `DatabaseSession`, and convenience `execute` / `fetch_all` / `fetch_one` (each
+  in its own transaction). All value binding is **parameterised**; read-only is
+  the default. Principal→DB-role mapping and an `explain()` for cost checks are
+  *planned* (later phases).
 - **`PolicyRule`** → `evaluate(ast, schema, ctx) -> PolicyDecision`; composed by
   a `PolicyEngine`
 - **`CacheBackend`** → `get(key)` / `set(key, value, ttl)` with
@@ -170,26 +191,64 @@ core depends only on the abstractions.
 - **`AuditStore`** → `record(audit_record)` append-only
 - **`EventPublisher`** → `publish(event)` to analytics/streaming sinks
 
-Supporting types (planned): `RequestContext`, `SchemaView`, `CandidateSQL`,
-`PolicyDecision`, `PipelineResult`, `AuditRecord`, and a typed error hierarchy
-(e.g., `QueryShieldError` → `ParseError`, `PolicyDenied`, `CostExceeded`,
-`ExecutionError`, `ConfigError`).
+Supporting types: the typed error hierarchy is **implemented** (`QueryShieldError`
+→ `ConfigError`, and `DatabaseError` → `DatabaseConnectionError` /
+`DatabaseExecutionError`); the remaining pipeline errors are *planned*
+(`ParseError`, `PolicyDenied`, `CostExceeded`, …). The data/transport types
+(`RequestContext`, `SchemaView`, `CandidateSQL`, `PolicyDecision`,
+`PipelineResult`, `AuditRecord`) are all still *planned*.
 
 ---
 
-## 7. Configuration model (planned)
+## 7. Configuration system (implemented in Phase 2)
 
-A single validated configuration object (intended: `pydantic-settings`),
-resolved with a clear precedence:
+A single validated configuration object, built with **pydantic v2** models and
+loaded by a small, explicit, deterministic loader in
+`src/queryshield/config.py`. We deliberately do **not** use `pydantic-settings`
+(ADR-0016); the loader is hand-written so the precedence and the fail-closed
+behavior are fully under our control and easy to test.
+
+**Precedence (highest wins):**
 
 ```
-built-in safe defaults  <  config file  <  environment variables  <  per-request RequestContext overrides (bounded)
+explicit overrides passed in code  >  environment variables (QUERYSHIELD_*)  >  YAML config file  >  built-in safe defaults
 ```
 
-Everything in the [Development rules](../CLAUDE.md#5-development-rules)
-"no hard-coding" list is sourced here or from `RequestContext`. Configuration is
-validated at startup; invalid config is a startup error (fail-closed), not a
-runtime surprise.
+```mermaid
+flowchart LR
+    DEF[Built-in safe defaults] --> MERGE
+    YAML["YAML file (QUERYSHIELD_CONFIG_FILE)"] --> MERGE
+    ENV["Env vars QUERYSHIELD_*, nested via __"] --> MERGE
+    OVR["Explicit overrides (kwargs)"] --> MERGE
+    MERGE[deep-merge, highest wins] --> VAL["pydantic validate (fail closed)"]
+    VAL -->|valid| CFG[QueryShieldConfig]
+    VAL -->|invalid| ERR["ConfigError (loc + msg only, no secrets)"]
+```
+
+- **Namespacing.** All variables use the prefix `QUERYSHIELD_`; nested fields use
+  a `__` delimiter (e.g. `QUERYSHIELD_DATABASE__URL` → `config.database.url`).
+  See ADR-0017.
+- **YAML layer.** `QUERYSHIELD_CONFIG_FILE` points at an optional YAML file,
+  parsed with `yaml.safe_load`. It supports `${VAR}` interpolation from the
+  environment; an **undefined** `${VAR}` is a fail-closed `ConfigError`, never an
+  empty string.
+- **Fail-closed validation.** `load_config()` deep-merges the layers and calls
+  `QueryShieldConfig.model_validate`. Any invalid or type-wrong
+  security-relevant value raises a structured `ConfigError` at load time — it is
+  never silently dropped. The `database` section is `extra="forbid"` (a typo'd
+  DB key is an error); the root object is `extra="ignore"` (so unrelated
+  `QUERYSHIELD_*` variables — e.g. the integration-test DSN — can coexist).
+- **Secrets.** `database.url` is a `pydantic.SecretStr`: it never appears in
+  reprs, logs, or validation-error output. Validation errors are rendered from
+  `loc` + `msg` only — input values are never echoed (ADR-0022).
+- **Everything deployment-specific lives here.** Connection URL, pool sizes,
+  timeouts, `statement_timeout`, `sslmode`, and log level are all configured,
+  each with a documented, overridable safe default. Nothing is hard-coded.
+
+The validated object is passed explicitly to components (e.g. the
+`PostgreSQLAdapter` takes a `DatabaseConfig`) — there is no global mutable
+config singleton. Per-request `RequestContext` overrides
+([§5](#5-the-requestcontext-security-principal)) remain *planned*.
 
 ---
 
@@ -236,9 +295,11 @@ runtime surprise.
 
 ## 11. Project foundation (implemented in Phase 1)
 
-Everything in §§1–10 is still *planned*. This section documents what the
-repository **actually** contains today, so this document never overstates
-reality.
+Most of §§1–10 is still *planned*. The exceptions implemented since — the
+configuration system ([§7](#7-configuration-system-implemented-in-phase-2)) and
+the database adapter — arrived in Phase 2 and are documented in
+[§12](#12-phase-2-implementation-configuration-and-database-layer). This section
+records what **Phase 1** delivered, so the history stays honest.
 
 Phase 1 established an installable, type-checked, testable Python project — and
 nothing more:
@@ -257,15 +318,127 @@ nothing more:
   `tests/integration/` is a documented placeholder for Phase 2 (ADR-0013).
 - **Quality gate:** `ruff` (lint + format) and `mypy --strict`, enforced in CI
   across Python 3.11–3.13 with no service containers (ADR-0014).
-- **Configuration convention:** `.env.example` documents the environment
-  variables later phases will consume. **No code reads it yet**; the validated
-  configuration model described in [§7](#7-configuration-model-planned) is not
-  implemented.
+- **Configuration convention:** `.env.example` documented the environment
+  variables later phases would consume. In Phase 1 **no code read it**; the
+  validated configuration model has since been implemented in Phase 2
+  ([§7](#7-configuration-system-implemented-in-phase-2)).
 
-How this maps onto the target architecture: the foundation is the empty vessel
-for §§1–10. The composition root, the seven interfaces ([§6](#6-major-interfaces-planned)),
+How this maps onto the target architecture: the foundation was the empty vessel
+for §§1–10. Phase 2 then filled in the configuration system
+([§7](#7-configuration-system-implemented-in-phase-2)) and the database adapter
+([§12](#12-phase-2-implementation-configuration-and-database-layer)). The
+remaining seven interfaces ([§6](#6-major-interfaces-planned-unless-marked-implemented)),
 the `RequestContext` ([§5](#5-the-requestcontext-security-principal)), and the
-configuration model ([§7](#7-configuration-model-planned)) are the **next**
-increment (the "core library skeleton"); the deterministic pipeline
-([§§2–4](#2-execution-pipeline)) follows after that. No shortcut has been taken
-that pre-commits any of those designs.
+deterministic pipeline ([§§2–4](#2-execution-pipeline)) are the increments that
+follow. No shortcut has been taken that pre-commits any of those designs.
+
+---
+
+## 12. Phase 2 implementation: configuration and database layer
+
+Phase 2 adds two foundations and nothing else. There is still **no** schema
+retrieval, LLM, SQL parser, policy engine, rewriter, cost check, cache, audit,
+or execution path for arbitrary user SQL.
+
+### 12.1 Modules
+
+```
+src/queryshield/
+├── __init__.py        # __version__ = "0.2.0"; curated public API; NullHandler
+├── errors.py          # QueryShieldError → ConfigError, DatabaseError → {Connection,Execution}
+├── config.py          # pydantic v2 models + deterministic load_config() (see §7)
+└── db/
+    ├── __init__.py     # DatabaseAdapter, DatabaseSession, HealthCheckResult, Row,
+    │                   #   PostgreSQLAdapter, sanitize_dsn  (curated)
+    ├── base.py         # abstract DatabaseAdapter + DatabaseSession Protocol + trust boundary
+    └── postgres.py     # PostgreSQLAdapter (psycopg 3 + psycopg_pool, async)
+```
+
+The top-level public API is deliberately small (asserted by a unit test):
+`__version__`, the two config models, `load_config`, and the five error types.
+Concrete adapters such as `PostgreSQLAdapter` are **not** re-exported at the top
+level — callers import them from `queryshield.db`, keeping the vendor at the edge
+(ADR-0019).
+
+### 12.2 Database abstraction & trust boundary
+
+`db/base.py` defines the vendor-neutral contract the rest of the system depends
+on:
+
+- `DatabaseAdapter` (ABC): `open()`, `close()`, `health_check()`,
+  `transaction(*, read_only=True)`, and convenience `execute` / `fetch_all` /
+  `fetch_one`, plus async-context-manager sugar.
+- `DatabaseSession` (Protocol): the `execute` / `fetch_all` / `fetch_one`
+  surface available **inside** a transaction.
+- `HealthCheckResult` (frozen dataclass): `healthy`, `latency_ms`, `error`.
+
+The module docstring states the **trust boundary** explicitly: the adapter is a
+trusted *executor of already-validated SQL*. It does **not** decide whether a
+query is authorized — that belongs to the (future) parser, policy engine, and
+rewriter. Accordingly:
+
+- There is **no** public "run any string the LLM produced" convenience. The
+  execution methods exist for QueryShield's own validated SQL; callers pass
+  values as **parameters**, never interpolated into the SQL text.
+- **Read-only is the default** for every transaction and convenience method
+  (`read_only=True`); a writable transaction must be asked for explicitly. An
+  integration test proves a write is rejected in the default read-only
+  transaction.
+
+```mermaid
+flowchart TD
+    subgraph FUTURE[Future deterministic core - not in Phase 2]
+        VSQL[Validated SQL + bound params]
+    end
+    subgraph ADAPTER[PostgreSQLAdapter - trusted executor]
+        POOL[AsyncConnectionPool]
+        TX["transaction(read_only=True by default)"]
+        HC[health_check -> real SELECT 1]
+    end
+    VSQL --> TX
+    POOL --> TX
+    TX -->|parameterised| PG[(PostgreSQL)]
+    HC --> PG
+    PG -->|roles / grants / RLS| PG
+```
+
+### 12.3 PostgreSQLAdapter (psycopg 3, async)
+
+- **Driver & concurrency:** psycopg 3 with `psycopg_pool.AsyncConnectionPool`.
+  The execution model is **async-only** — we do not ship a parallel sync API
+  (ADR-0018, ADR-0019).
+- **Pooling:** sizes and timeouts come from `DatabaseConfig`
+  (`pool_min_size`, `pool_max_size`, `pool_timeout`, `connect_timeout`). The pool
+  is created with `open=False` and opened explicitly; `close()` disposes it and
+  nulls the reference so a closed adapter cannot silently half-work (ADR-0020).
+- **statement_timeout** is applied at connection time via the libpq
+  `options=-c statement_timeout=<ms>` connection parameter, plus `sslmode` when
+  configured — no runtime `SET` round-trip.
+- **Real health check:** acquires a pooled connection, forces it read-only, and
+  runs `SELECT 1`. If the pool is closed or the database is unreachable it
+  returns `healthy=False` with a scrubbed error — it never reports healthy when
+  it cannot actually reach the database.
+- **Error mapping (fail-closed, no leaks):** pool/operational/OS failures →
+  `DatabaseConnectionError`; other `psycopg.Error` → `DatabaseExecutionError`.
+  Raw driver errors are not surfaced; messages are run through `scrub_secrets`
+  and annotated with a **sanitized** DSN (host/port/db/user only — never the
+  password) via `sanitize_dsn`. Original exceptions are chained with
+  `raise … from exc` so diagnostics survive internally (ADR-0022).
+
+### 12.4 Integration-test architecture
+
+`tests/integration/` exercises the adapter against a **real, disposable**
+PostgreSQL (ADR-0021):
+
+- Tests read `QUERYSHIELD_TEST_DATABASE_URL` and **skip** (never fail) when it is
+  unset, so they never depend on a developer's personal database.
+- Coverage: connection + health check, pool acquire/release under concurrency,
+  parameterised fetch, proof that hostile values are bound (not interpolated),
+  commit visible across pooled connections, rollback on error, write blocked in
+  the default read-only transaction, clean shutdown behavior, and invalid
+  credentials reported without leaking the password.
+- Each test that needs a table creates a uniquely named one
+  (`queryshield_it_<uuid4>`) and drops it in teardown — no fixed demo schema.
+- CI runs these against a `postgres:16` **service container** so the run is
+  reproducible; the quality job (lint, format, `mypy --strict`, non-integration
+  tests) runs across Python 3.11–3.13. No Mistral key appears anywhere.

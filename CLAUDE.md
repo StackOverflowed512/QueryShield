@@ -9,20 +9,29 @@
 
 ## Current status (read carefully)
 
-**Phase: 1 — Project foundation (installable, testable skeleton).**
+**Phase: 2 — Configuration system + PostgreSQL adapter foundation.**
 
-**No functional QueryShield code exists yet.** Phase 0 (documentation) is
-complete and committed; Phase 1 adds the *project foundation* — packaging
-(`pyproject.toml` + `src/queryshield/`), a test harness, `ruff`/`mypy`
-tooling, and CI — but **no** security/execution behavior. The package exposes
-only its version. Nothing in this file or in `docs/` should be read as a claim
-that a described functional component already works; everything in the
-pipeline is still **planned**, not implemented.
+Phase 1 (installable, testable skeleton) is complete and merged. Phase 2 adds
+**two foundations and nothing else**: (1) a typed, validated **configuration
+system** (`pydantic` v2 + a deterministic loader; precedence overrides > env >
+YAML > defaults; fail-closed) and (2) a clean **database abstraction** with a
+real **PostgreSQL adapter** (`psycopg` 3 + `psycopg_pool`, async: pooling, real
+health check, read-only-by-default transactions, parameterised execution, clean
+shutdown), plus the typed **error hierarchy** and library **logging** they need.
 
-> **Validation note:** the Phase 1 toolchain has been configured but not yet
-> *executed* in this environment (the sandbox's Bash command-safety classifier
-> is temporarily unavailable). See the Validation status in
-> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+**Still *not* implemented** (planned): schema retrieval, the Mistral LLM, SQL
+parsing/AST, the policy engine, rewriting, cost checks, the cache, audit, the
+HTTP API, `RequestContext`, and any execution path for *arbitrary user- or
+LLM-supplied* SQL. The adapter executes only QueryShield's own validated SQL and
+never decides whether a query is authorized. Nothing in this file or in `docs/`
+should be read as a claim that an unimplemented component already works.
+
+> **Validation note:** the Phase 2 source and tests have been written but **not
+> yet executed in this environment** — the sandbox's Bash command-safety
+> classifier is temporarily unavailable, and the only local interpreter is
+> Python 3.9 while the package requires ≥ 3.11. CI (quality matrix on 3.11–3.13
+> + PostgreSQL integration) is the authoritative gate. See the Validation status
+> in [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 The authoritative, always-current status is
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). When this
@@ -121,23 +130,24 @@ PostgreSQL → Result → Audit/Analytics
 These are the **intended** choices for the implementation phases. Items marked
 "proposed" are reasonable defaults that may be revisited; items marked "open"
 are explicitly undecided and tracked in [`docs/DECISIONS.md`](docs/DECISIONS.md).
-As of Phase 1 the **tooling** choices are adopted and pinned in `pyproject.toml`
-(Python ≥ 3.11, `src/` layout, Hatchling, `pytest`, `ruff`, `mypy`). The
-**runtime** choices (config, SQL parser, PG driver, LLM client, cache, HTTP API)
-are **not** installed yet — Phase 1 has **zero runtime dependencies** by design,
-and each runtime library is introduced only in the phase that needs it.
+The **tooling** choices (Python ≥ 3.11, `src/` layout, Hatchling, `pytest`,
+`ruff`, `mypy`) were adopted in Phase 1. Phase 2 adopts the **config** and
+**PostgreSQL driver** choices and pins their libraries in `pyproject.toml`
+(`pydantic` v2, `PyYAML`, `psycopg` 3 + `psycopg_pool`). The remaining runtime
+choices (SQL parser, LLM client, cache, HTTP API) are **not** installed yet —
+each runtime library is introduced only in the phase that needs it.
 
 | Concern              | Intended choice                                   | Firmness |
 |----------------------|---------------------------------------------------|----------|
 | Language             | Python ≥ 3.11                                     | adopted  |
 | Packaging / layout   | `pyproject.toml` (PEP 621), `src/` layout, Hatchling | adopted |
-| Config & validation  | `pydantic` v2 / `pydantic-settings`               | proposed |
+| Config & validation  | `pydantic` v2 + explicit loader + `PyYAML` (not `pydantic-settings`) | adopted (ADR-0016/0017) |
 | SQL parsing / AST    | `sqlglot` vs `pglast` (libpg_query)               | **open** |
-| PostgreSQL driver    | `asyncpg` and/or `psycopg` 3                      | proposed |
+| PostgreSQL driver    | `psycopg` 3 (+`psycopg_pool`), async              | adopted (ADR-0018/0019) |
 | LLM client           | Mistral official SDK / HTTP; key from env         | proposed |
 | Cache                | Redis (`redis-py`) + in-memory default            | proposed |
 | HTTP API (optional)  | FastAPI, wrapping the library core                | proposed |
-| Testing              | `pytest` (+`pytest-cov`); `pytest-asyncio` & real PostgreSQL via containers later | `pytest` adopted |
+| Testing              | `pytest` (+`pytest-asyncio`, `pytest-cov`); real PostgreSQL via containers | adopted |
 | Lint / type / format | `ruff`, `mypy` (strict), `ruff format`            | adopted  |
 | Logging              | Structured logs (JSON-capable)                    | proposed |
 
@@ -240,7 +250,7 @@ planned vs. implemented explicitly.
 
 See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 current (real) tree and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-**planned** `src/queryshield/` package layout. As of Phase 1 the repository is:
+**planned** `src/queryshield/` package layout. As of Phase 2 the repository is:
 
 ```
 QueryShield/
@@ -258,11 +268,22 @@ QueryShield/
 │   └── DECISIONS.md
 ├── src/
 │   └── queryshield/
-│       ├── __init__.py        # exposes __version__ only — no functionality
-│       └── py.typed           # PEP 561 typing marker
+│       ├── __init__.py        # version + curated public API (config + errors)
+│       ├── py.typed           # PEP 561 typing marker
+│       ├── errors.py          # typed exception hierarchy
+│       ├── config.py          # pydantic config models + load_config()
+│       └── db/
+│           ├── __init__.py    # curated db exports
+│           ├── base.py        # DatabaseAdapter ABC + DatabaseSession Protocol
+│           └── postgres.py    # PostgreSQLAdapter (psycopg 3 + psycopg_pool)
 └── tests/
     ├── unit/
-    │   └── test_package.py
+    │   ├── test_package.py
+    │   ├── test_config.py
+    │   ├── test_errors.py
+    │   └── test_dsn.py
     └── integration/
-        └── README.md          # placeholder; real integration tests in Phase 2
+        ├── README.md          # how to run the PostgreSQL integration tests
+        ├── conftest.py        # skip-unless-DSN fixtures; disposable test table
+        └── test_postgres_adapter.py
 ```
