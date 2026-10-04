@@ -125,7 +125,7 @@ class PostgreSQLAdapter(DatabaseAdapter):
         start = time.perf_counter()
         try:
             async with pool.connection(timeout=self._config.pool_timeout) as conn:
-                conn.read_only = True
+                await conn.set_read_only(True)
                 await conn.execute("SELECT 1")
         except (PoolTimeout, psycopg.Error, OSError, TimeoutError) as exc:
             logger.warning("PostgreSQL health check failed (%s)", self._display)
@@ -140,7 +140,7 @@ class PostgreSQLAdapter(DatabaseAdapter):
         pool = self._require_pool()
         try:
             async with pool.connection(timeout=self._config.pool_timeout) as conn:
-                conn.read_only = read_only
+                await conn.set_read_only(read_only)
                 async with conn.transaction():
                     yield _PsycopgSession(conn, self._secrets)
         except (PoolTimeout, psycopg.OperationalError, OSError) as exc:
