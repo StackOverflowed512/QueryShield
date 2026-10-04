@@ -102,9 +102,7 @@ def test_non_postgresql_url_scheme_is_rejected() -> None:
 def test_unrelated_prefixed_env_vars_are_ignored() -> None:
     # The integration-test DSN uses the QUERYSHIELD_ prefix; loading must not fail
     # just because such a variable is present in the environment.
-    config = load_config(
-        env=_env(QUERYSHIELD_TEST_DATABASE_URL="postgresql://x:y@h/z")
-    )
+    config = load_config(env=_env(QUERYSHIELD_TEST_DATABASE_URL="postgresql://x:y@h/z"))
     assert config.database.url.get_secret_value() == VALID_URL
 
 
@@ -126,10 +124,7 @@ def test_top_level_override_beats_environment() -> None:
 def test_yaml_file_is_read_and_below_env(tmp_path: Path) -> None:
     yaml_file = tmp_path / "queryshield.yaml"
     yaml_file.write_text(
-        "log_level: WARNING\n"
-        "database:\n"
-        f"  url: {VALID_URL}\n"
-        "  pool_max_size: 3\n",
+        f"log_level: WARNING\ndatabase:\n  url: {VALID_URL}\n  pool_max_size: 3\n",
         encoding="utf-8",
     )
     # YAML supplies everything; env overrides one value (env > yaml).

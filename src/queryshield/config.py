@@ -118,9 +118,7 @@ class DatabaseConfig(BaseModel):
     @classmethod
     def _validate_sslmode(cls, value: str | None) -> str | None:
         if value is not None and value not in _VALID_SSLMODES:
-            raise ValueError(
-                f"sslmode must be one of {sorted(_VALID_SSLMODES)}"
-            )
+            raise ValueError(f"sslmode must be one of {sorted(_VALID_SSLMODES)}")
         return value
 
     @model_validator(mode="after")
@@ -163,9 +161,7 @@ class QueryShieldConfig(BaseModel):
     def _normalise_log_level(cls, value: str) -> str:
         level = value.upper()
         if level not in _VALID_LOG_LEVELS:
-            raise ValueError(
-                f"log_level must be one of {sorted(_VALID_LOG_LEVELS)}"
-            )
+            raise ValueError(f"log_level must be one of {sorted(_VALID_LOG_LEVELS)}")
         return level
 
 
@@ -260,8 +256,7 @@ def _expand_env_refs(obj: Any, environ: Mapping[str, str], path: Path) -> Any:
     """
     if isinstance(obj, dict):
         return {
-            key: _expand_env_refs(value, environ, path)
-            for key, value in obj.items()
+            key: _expand_env_refs(value, environ, path) for key, value in obj.items()
         }
     if isinstance(obj, list):
         return [_expand_env_refs(item, environ, path) for item in obj]
