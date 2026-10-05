@@ -1,16 +1,20 @@
 """QueryShield — secure, auditable text-to-SQL infrastructure for PostgreSQL.
 
-**Phase 2** adds the configuration foundation and the database abstraction plus a
-real PostgreSQL adapter. The deterministic security pipeline (SQL parsing/AST,
-policy engine, rewriting, cost checks), schema introspection/retrieval, the
+**Phase 3** adds dynamic PostgreSQL **schema introspection**: a
+:class:`~queryshield.schema.SchemaRetriever` abstraction with a concrete
+PostgreSQL implementation that turns a live database into an immutable
+:class:`~queryshield.schema.SchemaCatalog` snapshot (on top of the Phase 2
+configuration foundation and database adapter). The remaining deterministic
+security pipeline (SQL parsing/AST, policy engine, rewriting, cost checks), the
 Mistral provider, caching, and audit are still **not** implemented — see
 ``docs/IMPLEMENTATION_STATUS.md`` for the authoritative status and
 ``docs/ARCHITECTURE.md`` for the intended design.
 
 The public API is intentionally small: the validated configuration model and its
 loader, and the typed error hierarchy. The database adapter lives under
-:mod:`queryshield.db` because it is a lower-level, *trusted* executor (see the
-trust boundary in ``docs/ARCHITECTURE.md``), not a user-facing query API.
+:mod:`queryshield.db` and the schema types under :mod:`queryshield.schema`,
+because each is a lower-level component (see the trust boundary in
+``docs/ARCHITECTURE.md``), not a user-facing query API.
 """
 
 from __future__ import annotations
@@ -24,6 +28,9 @@ from queryshield.errors import (
     DatabaseError,
     DatabaseExecutionError,
     QueryShieldError,
+    SchemaError,
+    SchemaMetadataError,
+    SchemaRetrievalError,
 )
 
 __all__ = [
@@ -34,6 +41,9 @@ __all__ = [
     "DatabaseExecutionError",
     "QueryShieldConfig",
     "QueryShieldError",
+    "SchemaError",
+    "SchemaMetadataError",
+    "SchemaRetrievalError",
     "__version__",
     "load_config",
 ]
@@ -42,7 +52,7 @@ __all__ = [
 #: reads this literal at build time — see ``[tool.hatch.version]`` in
 #: ``pyproject.toml`` — so the installed distribution's metadata and this value
 #: never drift.
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # Library best practice: attach a no-op handler so importing QueryShield never
 # emits "No handlers could be found" warnings and never configures logging on the

@@ -40,9 +40,11 @@ def test_in_code_version_matches_distribution_metadata() -> None:
 
 
 def test_public_api_is_curated_and_small() -> None:
-    # Phase 2 exposes the config model/loader and the error hierarchy — and
-    # nothing more. The database adapter is deliberately NOT a top-level export
-    # (it lives under ``queryshield.db`` as a lower-level, trusted component).
+    # The top level exposes the config model/loader and the error hierarchy —
+    # and nothing more. Neither the database adapter nor the schema retriever is
+    # a top-level export: they live under ``queryshield.db`` and
+    # ``queryshield.schema`` as lower-level components. Phase 3 adds only the
+    # three schema *errors* to the top-level hierarchy.
     expected = {
         "__version__",
         "QueryShieldConfig",
@@ -53,10 +55,16 @@ def test_public_api_is_curated_and_small() -> None:
         "DatabaseError",
         "DatabaseConnectionError",
         "DatabaseExecutionError",
+        "SchemaError",
+        "SchemaRetrievalError",
+        "SchemaMetadataError",
     }
     assert set(queryshield.__all__) == expected
     assert "PostgreSQLAdapter" not in queryshield.__all__
     assert not hasattr(queryshield, "PostgreSQLAdapter")
+    # The retriever is reachable through its subpackage, not the top level.
+    assert "PostgreSQLSchemaRetriever" not in queryshield.__all__
+    assert not hasattr(queryshield, "PostgreSQLSchemaRetriever")
 
 
 def test_every_exported_name_is_resolvable() -> None:
