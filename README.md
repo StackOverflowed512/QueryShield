@@ -8,15 +8,17 @@ PostgreSQL database that *executes* it. It exists to close the gap between "an
 LLM can write SQL" and "it is safe to run LLM-written SQL against a production
 database."
 
-> ### ⚠️ Project status: Phase 2 — configuration system + PostgreSQL adapter foundation
+> ### ⚠️ Project status: Phase 3 — dynamic PostgreSQL schema introspection
 >
-> This repository implements **two foundations** so far: a typed, validated
-> **configuration system** and a **PostgreSQL database adapter** (pooled, with a
-> real health check, read-only-by-default transactions, and parameterised
-> execution), plus the typed error hierarchy and logging they need. The rest of
-> the architecture below — schema retrieval, the LLM, SQL parsing, the policy
-> engine, rewriting, cost checks, caching, execution of arbitrary user/LLM SQL,
-> audit, and the HTTP API — is still **planned**. Track what actually exists in
+> This repository implements, so far: a typed, validated **configuration
+> system**; a **PostgreSQL database adapter** (pooled, with a real health check,
+> read-only-by-default transactions, and parameterised execution); and — new in
+> Phase 3 — **dynamic schema introspection** that turns a live database into an
+> immutable, fingerprinted `SchemaCatalog` snapshot. The rest of the
+> architecture below — the LLM, SQL parsing, the policy engine, rewriting, cost
+> checks, caching, execution of arbitrary user/LLM SQL, audit, and the HTTP API
+> — is still **planned**, and the schema layer itself makes **no** security
+> decision and generates/executes **no** SQL. Track what actually exists in
 > [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md), which is the
 > authoritative source of truth.
 
@@ -65,11 +67,20 @@ Cost/Complexity → Secure Cache → PostgreSQL → Result → Audit/Analytics
   clean shutdown, and driver errors mapped to a typed hierarchy without leaking
   credentials. Integration tests run against a real PostgreSQL (a `postgres:16`
   service container in CI).
+- *Phase 3 — schema introspection:* a `SchemaRetriever` abstraction and a
+  `PostgreSQLSchemaRetriever` that reuses the Phase 2 adapter to introspect a
+  live database through `pg_catalog` — one read-only transaction, six bounded
+  parameterised queries, `has_table_privilege`-filtered — producing an
+  **immutable `SchemaCatalog`** of frozen, strongly typed models (schemas,
+  tables, views, columns, primary/foreign/unique keys, indexes) with a
+  deterministic structural **fingerprint**. Identifiers are preserved verbatim;
+  schema selection is a generic, config-driven `SchemaFilter` (no hard-coded
+  schema names). Covered by unit tests and real-PostgreSQL integration tests.
 
-**Not implemented yet (planned):** schema retrieval, the Mistral LLM provider,
-SQL parsing/AST, the deterministic policy engine, query rewriting/validation,
-cost/complexity checks, the secure cache, execution of arbitrary user/LLM SQL,
-audit/analytics, the HTTP API, and `RequestContext`. See
+**Not implemented yet (planned):** the Mistral LLM provider, SQL parsing/AST,
+the deterministic policy engine, query rewriting/validation, cost/complexity
+checks, the secure cache, execution of arbitrary user/LLM SQL, audit/analytics,
+the HTTP API, and `RequestContext`. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 ## Requirements
@@ -130,9 +141,10 @@ src/queryshield/       # the package
 ├── __init__.py        #   version + curated public API (config + errors)
 ├── errors.py          #   typed exception hierarchy
 ├── config.py          #   pydantic config models + load_config()
-└── db/                #   DatabaseAdapter abstraction + PostgreSQLAdapter
+├── db/                #   DatabaseAdapter abstraction + PostgreSQLAdapter
+└── schema/            #   SchemaRetriever + PostgreSQLSchemaRetriever + models
 tests/unit/            # fast, isolated unit tests (no database)
-tests/integration/     # real PostgreSQL-backed adapter tests
+tests/integration/     # real PostgreSQL-backed adapter + schema tests
 docs/                  # architecture, status, and decision records
 .github/workflows/     # continuous integration
 ```

@@ -9,29 +9,37 @@
 
 ## Current status (read carefully)
 
-**Phase: 2 — Configuration system + PostgreSQL adapter foundation.**
+**Phase: 3 — Dynamic PostgreSQL schema introspection.**
 
-Phase 1 (installable, testable skeleton) is complete and merged. Phase 2 adds
-**two foundations and nothing else**: (1) a typed, validated **configuration
-system** (`pydantic` v2 + a deterministic loader; precedence overrides > env >
-YAML > defaults; fail-closed) and (2) a clean **database abstraction** with a
-real **PostgreSQL adapter** (`psycopg` 3 + `psycopg_pool`, async: pooling, real
-health check, read-only-by-default transactions, parameterised execution, clean
-shutdown), plus the typed **error hierarchy** and library **logging** they need.
+Phases 1 (installable, testable skeleton) and 2 (configuration system +
+PostgreSQL adapter foundation) are complete and merged to `main` (Phase 2 via
+PR #3). Phase 3 adds **one capability and nothing else**: dynamic **schema
+introspection**. A `SchemaRetriever` abstraction with a concrete
+`PostgreSQLSchemaRetriever` **reuses the Phase 2 `DatabaseAdapter`** (no second
+connection path) to introspect a live database through `pg_catalog` — in **one
+read-only transaction** of **six bounded, parameterised** queries, honouring
+`has_table_privilege` — and returns an immutable **`SchemaCatalog`** snapshot of
+strongly typed, frozen domain models (schemas, tables, views, columns,
+primary/foreign/unique keys, indexes) carrying a deterministic structural
+**fingerprint**. Identifiers are preserved verbatim; nothing deployment-specific
+is hard-coded (schema selection is a generic, config-driven `SchemaFilter`).
 
-**Still *not* implemented** (planned): schema retrieval, the Mistral LLM, SQL
-parsing/AST, the policy engine, rewriting, cost checks, the cache, audit, the
-HTTP API, `RequestContext`, and any execution path for *arbitrary user- or
-LLM-supplied* SQL. The adapter executes only QueryShield's own validated SQL and
-never decides whether a query is authorized. Nothing in this file or in `docs/`
-should be read as a claim that an unimplemented component already works.
+**Still *not* implemented** (planned): the Mistral LLM, SQL parsing/AST, the
+policy engine, rewriting, cost checks, the cache, audit, the HTTP API,
+`RequestContext`, and any execution path for *arbitrary user- or LLM-supplied*
+SQL. The schema layer only *describes* structure — it makes **no** security or
+authorization decision, performs no NL→SQL generation, and never executes
+candidate SQL. Nothing in this file or in `docs/` should be read as a claim that
+an unimplemented component already works.
 
-> **Validation note:** the Phase 2 source and tests have been written but **not
-> yet executed in this environment** — the sandbox's Bash command-safety
-> classifier is temporarily unavailable, and the only local interpreter is
-> Python 3.9 while the package requires ≥ 3.11. CI (quality matrix on 3.11–3.13
-> + PostgreSQL integration) is the authoritative gate. See the Validation status
-> in [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+> **Validation note:** Phase 2 is merged and green in CI (PR #3). The Phase 3
+> source and tests have been written but **not yet executed in this
+> environment** — the only local interpreter is Python 3.9 while the package
+> requires ≥ 3.11 (so `queryshield` cannot even import locally), and the
+> sandbox's Bash command-safety classifier is intermittently unavailable. CI
+> (quality matrix on 3.11–3.13 + PostgreSQL integration against `postgres:16`)
+> is the authoritative gate. See the Validation status in
+> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 The authoritative, always-current status is
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). When this
@@ -250,7 +258,7 @@ planned vs. implemented explicitly.
 
 See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 current (real) tree and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-**planned** `src/queryshield/` package layout. As of Phase 2 the repository is:
+**planned** `src/queryshield/` package layout. As of Phase 3 the repository is:
 
 ```
 QueryShield/
@@ -272,18 +280,28 @@ QueryShield/
 │       ├── py.typed           # PEP 561 typing marker
 │       ├── errors.py          # typed exception hierarchy
 │       ├── config.py          # pydantic config models + load_config()
-│       └── db/
-│           ├── __init__.py    # curated db exports
-│           ├── base.py        # DatabaseAdapter ABC + DatabaseSession Protocol
-│           └── postgres.py    # PostgreSQLAdapter (psycopg 3 + psycopg_pool)
+│       ├── db/
+│       │   ├── __init__.py    # curated db exports
+│       │   ├── base.py        # DatabaseAdapter ABC + DatabaseSession Protocol
+│       │   └── postgres.py    # PostgreSQLAdapter (psycopg 3 + psycopg_pool)
+│       └── schema/
+│           ├── __init__.py    # curated schema exports
+│           ├── base.py        # SchemaRetriever ABC (retrieve() -> SchemaCatalog)
+│           ├── models.py      # frozen domain models + structural fingerprint
+│           ├── filter.py      # SchemaFilter (generic include/exclude selection)
+│           └── postgres.py    # PostgreSQLSchemaRetriever (pg_catalog introspection)
 └── tests/
     ├── unit/
     │   ├── test_package.py
     │   ├── test_config.py
     │   ├── test_errors.py
-    │   └── test_dsn.py
+    │   ├── test_dsn.py
+    │   ├── test_schema_models.py
+    │   ├── test_schema_filter.py
+    │   └── test_schema_retriever.py
     └── integration/
         ├── README.md          # how to run the PostgreSQL integration tests
         ├── conftest.py        # skip-unless-DSN fixtures; disposable test table
-        └── test_postgres_adapter.py
+        ├── test_postgres_adapter.py
+        └── test_schema_retriever.py
 ```

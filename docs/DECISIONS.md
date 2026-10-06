@@ -514,3 +514,188 @@
   than a raw driver error; the full chained cause remains available to internal
   logging/debuggers. New secret-bearing fields must use `SecretStr`, and new
   error paths must scrub before raising.
+
+---
+
+## ADR-0023 — Dedicated schema-introspection layer behind a `SchemaRetriever` interface
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** Phase 3 must discover a PostgreSQL database's *structure*
+  (schemas, tables, views, columns, keys, constraints, indexes) to feed later
+  stages (LLM prompting, the policy engine, the rewriter). It must reuse the
+  Phase 2 database layer rather than open its own connections, be swappable (a
+  different catalog source could exist), and fail closed with typed errors
+  distinct from the database layer's — a reachable-but-failed catalog query, an
+  internally inconsistent catalog, and an unreachable database are three
+  different conditions a caller must be able to tell apart.
+- **Decision:** Introduce a `queryshield.schema` package with an abstract
+  **`SchemaRetriever`** (`async def retrieve() -> SchemaCatalog`) and a concrete
+  **`PostgreSQLSchemaRetriever`** constructed with an existing
+  `DatabaseAdapter`, running all introspection through it — **no second
+  connection or pool implementation**. Add a **`SchemaError`** hierarchy
+  (`SchemaRetrievalError`, `SchemaMetadataError`) that is **not** a subclass of
+  `DatabaseError`: a reachable database whose catalog query fails becomes a
+  `SchemaRetrievalError` (chained `from` the cause); a catalog whose rows are
+  internally inconsistent becomes a `SchemaMetadataError` raised from a *pure*
+  assembly step outside the I/O boundary; a connection failure propagates as the
+  Phase 2 `DatabaseConnectionError`, unchanged. Introspection **never** returns a
+  fabricated empty catalog on failure.
+- **Alternatives considered:** (a) Fold introspection into the adapter — rejected;
+  the adapter is a trusted *executor*, not a catalog model (ADR-0019), and this
+  would bloat the trust boundary. (b) A new connection pool for introspection —
+  rejected; duplicates ADR-0020 and splits the single execution path. (c) Reuse
+  `DatabaseError` for schema faults — rejected; callers must distinguish "DB
+  down" from "catalog malformed" from "catalog query failed".
+- **Reason:** One connection path, a swappable interface, and a precise,
+  fail-closed error contract that keeps metadata faults separate from I/O faults.
+- **Consequences:** The retriever operates as whatever database identity the
+  adapter is configured with; binding it to a per-request principal
+  (`RequestContext`, ADR-0010) and to a dedicated `SchemaConfig` section is
+  **deferred** to the phase that introduces request handling (ADR-0028). Future
+  catalog sources implement the same interface without touching callers.
+
+---
+
+## ADR-0024 — Frozen, slotted dataclasses for the schema domain model
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** The discovered schema is a **read-only snapshot** produced by
+  trusted introspection code and consumed widely downstream. It must be
+  immutable (a snapshot must not mutate after retrieval), cheap, and
+  dependency-light, and it carries **no** security or governance data (no PII
+  labels, no per-principal visibility) — that belongs to later layers.
+- **Decision:** Model the catalog as **frozen, slotted `@dataclass`es** —
+  `Column`, `PrimaryKey`, `UniqueConstraint`, `ForeignKey`, `Index`, `Table`,
+  `View`, `Schema`, `SchemaCatalog` — with tuple (immutable) collections. A
+  **`View` is modelled separately from `Table`**: a view has no primary or
+  foreign keys, and a *materialized* view can carry indexes while a plain view's
+  index tuple is always empty. Do **not** use `pydantic` for these types.
+- **Alternatives considered:** (a) `pydantic` models — rejected; runtime
+  validation buys nothing for objects *produced* by trusted code rather than
+  *parsed* from untrusted input, and it is heavier. (b) A single `Relation` type
+  with a kind flag — rejected; it would carry meaningless PK/FK fields on views,
+  inviting misuse. (c) Mutable dataclasses or dicts — rejected; a snapshot must
+  be immutable and typed.
+- **Reason:** Immutability by construction, low cost, zero dependency, and
+  consistency with the frozen-slotted `HealthCheckResult` from Phase 2.
+- **Consequences:** The objects are hashable and safe to share; building them is
+  the introspector's job; `mypy --strict` enforces the shapes. Downstream code
+  treats a `SchemaCatalog` as strictly read-only.
+
+---
+
+## ADR-0025 — Introspect via `pg_catalog`, one read-only transaction, honoring `has_table_privilege`
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** The retriever needs accurate PostgreSQL structure, including
+  PG-specific detail the SQL-standard `information_schema` flattens or omits
+  (exact rendered types, materialized views, partitioned tables, expression-index
+  columns). It must **not** interpolate values into SQL, must **not** issue a
+  query per object (no N+1), and must show a role only what it may actually read.
+- **Decision:** Query **`pg_catalog`** (not `information_schema`) through
+  **exactly six bounded statements in one read-only transaction**: (1) namespaces;
+  then — after filtering the names in Python (ADR-0028) — (2) relations,
+  (3) columns, (4) primary/unique constraints, (5) foreign keys, (6) indexes. The
+  selected schema names are passed as a **single bound array parameter** used
+  with **`= ANY(%s)`**, never string-interpolated. Relations are filtered by
+  **`has_table_privilege(…, 'SELECT')`** so a role sees only what it may read.
+  Column types are rendered with `pg_catalog.format_type` and kept verbatim as
+  text (ADR-0026).
+- **Alternatives considered:** (a) `information_schema` — rejected; it loses PG
+  specifics (materialized views, partitioning, exact type text, expression
+  indexes) and is often slower. (b) One query per table/relation — rejected; N+1,
+  slow, and racier. (c) Building the schema allow-list into the SQL text —
+  rejected by the no-hard-coding and no-interpolation rules.
+- **Reason:** Fidelity, a bounded and auditable query count, parameter safety, and
+  privilege-correct results.
+- **Consequences:** The retriever is PostgreSQL-specific (acceptable behind
+  `SchemaRetriever`); it reports exactly what its database identity is granted;
+  the round-trip count is six regardless of catalog size. A foreign key may
+  reference a relation outside the selection or unreadable by the role —
+  recording the reference is not a claim of access to its target.
+
+---
+
+## ADR-0026 — Canonical identifiers preserved verbatim
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** PostgreSQL identifiers may be mixed-case, contain spaces or
+  Unicode, or be reserved words when quoted. Case-folding or otherwise
+  normalizing them would make catalog lookups disagree with the database and
+  could blur two genuinely distinct identifiers into one.
+- **Decision:** Store every `name` **exactly as PostgreSQL reports it**
+  (`pg_class.relname` et al.) — original case, spaces, Unicode, reserved words —
+  and **never** case-fold or normalize. Lookups
+  (`get_schema`/`get_table`/`get_view`/`get_column`) are **exact, case-sensitive**
+  matches on the stored string. Rendering an identifier back into SQL (quoting)
+  belongs to the future query-construction layer, not to these models.
+- **Alternatives considered:** (a) Lower-casing or normalizing identifiers —
+  rejected; it diverges from the database and is a correctness *and* security
+  risk (an identifier-level differential). (b) Storing a normalized key alongside
+  the raw name — rejected; speculative, unused, and a source of ambiguity.
+- **Reason:** The model must mean exactly what the database means; identity is
+  byte-for-byte.
+- **Consequences:** Callers match names exactly. A case-insensitive convenience
+  lookup, if ever needed, is an explicit future addition that must not become the
+  default.
+
+---
+
+## ADR-0027 — Deterministic structural fingerprint
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** Downstream caching and drift detection need a stable identifier
+  for "the shape of this database" that changes **iff** the structure changes —
+  independent of the order introspection assembled rows in, and independent of
+  documentation or wall-clock time.
+- **Decision:** `SchemaCatalog.from_schemas` computes a **SHA-256 over a canonical
+  JSON encoding of the structure**, prefixed **`sha256:`**. The encoding sorts
+  collections (schemas/tables/views by name, columns by `(ordinal, name)`,
+  constraints and indexes by name) so assembly order is irrelevant, while
+  semantically meaningful order (column ordinal; key/FK/index column order) is
+  preserved and encoded. **Comments, retrieval time, and database identity are
+  deliberately excluded.** JSON is emitted with
+  `sort_keys=True, separators=(",", ":"), ensure_ascii=False`.
+- **Alternatives considered:** (a) A timestamp or UUID per retrieval — rejected;
+  not reproducible, defeats the caching/drift use. (b) Hashing a Python `repr` —
+  rejected; order- and format-fragile. (c) Including comments — rejected;
+  documentation is not structure and would cause spurious cache invalidation.
+- **Reason:** A pure function of shape — exactly what a cache key or drift check
+  wants.
+- **Consequences:** Two structurally identical snapshots share a fingerprint; any
+  structural change moves it; a comment change does not. The `sha256:` prefix
+  makes the scheme self-describing, so a future algorithm is distinguishable from
+  this one.
+
+---
+
+## ADR-0028 — Snapshot semantics, explicit refresh, and generic config-driven schema filtering
+- **Status:** Accepted (realized in Phase 3)
+- **Date:** 2026-10-05
+- **Context:** Two related lifecycle questions: *which* schemas a retrieval
+  covers, and *when* its data is considered current. The product forbids
+  hard-coding deployment-specific schema names (CLAUDE.md §5) and forbids silent
+  stale data (fail closed, ADR-0004).
+- **Decision:** `SchemaCatalog` is an **immutable point-in-time snapshot** with
+  **no implicit caching and no concept of staleness**; obtaining current
+  structure is an **explicit `retrieve()`** that always re-introspects and
+  returns a fresh, independent snapshot. Schema selection is a **generic,
+  configurable `SchemaFilter`**: a safe default that **skips system schemas**
+  (`pg_*`, `information_schema`) and admits everything else; an optional exact
+  **allow-list** (`include`); and a **deny-list** (`exclude`) applied after it —
+  all **case-sensitive** and **order-preserving**. No schema name (`public`,
+  `customers`, …) is ever hard-coded, and an explicit empty allow-list
+  legitimately selects **nothing** (short-circuiting the per-object queries)
+  rather than erroring.
+- **Alternatives considered:** (a) Caching the catalog inside the retriever with a
+  TTL — rejected for Phase 3; it hides staleness. A cache, if added, belongs in an
+  explicit `CacheBackend` with its own invalidation keyed on the fingerprint
+  (ADR-0027). (b) Assuming the `public` schema — rejected by the no-hard-coding
+  rule and the multi-schema reality. (c) Building include/exclude from a fixed
+  list — rejected; deployment-specific.
+- **Reason:** Honest, explicit freshness and deployment-agnostic scoping.
+- **Consequences:** Callers decide when to refresh and may compare fingerprints
+  (ADR-0027) to detect drift. Wiring the filter to a dedicated `SchemaConfig`
+  section and to the per-request `RequestContext` principal (ADR-0010) is
+  **deferred** to the request-handling phase; today the retriever takes an
+  explicit `SchemaFilter` whose default skips system schemas.

@@ -1,10 +1,11 @@
 """QueryShield's typed error hierarchy.
 
-Phase 2 introduces only the errors the configuration and database foundations
-need. The hierarchy is intentionally small but designed to grow: later phases
-add sibling errors (SQL parsing, policy denials, LLM failures, cost limits)
-under the same :class:`QueryShieldError` root, so a caller can catch the whole
-family or one specific failure mode.
+Phase 2 introduced the errors the configuration and database foundations need;
+Phase 3 adds the schema-introspection errors under the same root. The hierarchy
+is intentionally small but designed to grow: later phases add sibling errors
+(SQL parsing, policy denials, LLM failures, cost limits) under the same
+:class:`QueryShieldError` root, so a caller can catch the whole family or one
+specific failure mode.
 
 Design rules (see ``docs/ARCHITECTURE.md`` and ADR-0022):
 
@@ -57,4 +58,37 @@ class DatabaseExecutionError(DatabaseError):
     in *trusted* internal SQL, errors raised while committing, and so on) so
     callers depend on QueryShield's error model rather than a specific driver's
     exception classes.
+    """
+
+
+class SchemaError(QueryShieldError):
+    """Base class for schema-introspection failures.
+
+    Schema retrieval sits on top of the database layer, so a *connection*
+    failure during introspection is reported as a
+    :class:`DatabaseConnectionError` (it is a database-reachability problem, not
+    a schema problem). The two failures below are the ones that are specific to
+    reading and interpreting the catalog.
+    """
+
+
+class SchemaRetrievalError(SchemaError):
+    """A catalog query needed to introspect the schema failed to execute.
+
+    The database was reachable, but a ``pg_catalog`` / ``information_schema``
+    query QueryShield issued did not complete (for example, it was cancelled by
+    ``statement_timeout`` or rejected by permissions). This is fail-closed: the
+    retriever raises rather than returning a partial or empty catalog, because an
+    empty database and a failed introspection must never look alike.
+    """
+
+
+class SchemaMetadataError(SchemaError):
+    """The catalog returned metadata that was malformed or internally inconsistent.
+
+    Raised when assembling the snapshot reveals something that should be
+    impossible for a coherent catalog — e.g. a column, constraint, or index that
+    refers to a relation the same introspection did not report. Fail-closed: a
+    surprising catalog shape is surfaced, never silently discarded, so a parser
+    differential or a privilege anomaly cannot pass unnoticed.
     """
