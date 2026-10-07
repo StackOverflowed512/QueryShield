@@ -317,9 +317,7 @@ class _ViewBuild:
 
 
 def _assemble_catalog(raw: _RawRows) -> SchemaCatalog:
-    schema_comments = {
-        _as_str(row[0]): _as_opt_str(row[1]) for row in raw.schemas
-    }
+    schema_comments = {_as_str(row[0]): _as_opt_str(row[1]) for row in raw.schemas}
     tables: dict[tuple[str, str], _TableBuild] = {}
     views: dict[tuple[str, str], _ViewBuild] = {}
 
@@ -365,8 +363,7 @@ def _attach_columns(
             views[key].columns.append(column)
         else:
             raise SchemaMetadataError(
-                f"column {column.name!r} refers to unknown relation "
-                f"{key[0]}.{key[1]}"
+                f"column {column.name!r} refers to unknown relation {key[0]}.{key[1]}"
             )
 
 
@@ -381,8 +378,7 @@ def _attach_key_constraints(
         columns = _as_str_tuple(row[4])
         if key not in tables:
             raise SchemaMetadataError(
-                f"constraint {name!r} refers to unknown table "
-                f"{key[0]}.{key[1]}"
+                f"constraint {name!r} refers to unknown table {key[0]}.{key[1]}"
             )
         if not columns:
             raise SchemaMetadataError(
@@ -412,13 +408,11 @@ def _attach_foreign_keys(
         ref_columns = _as_str_tuple(row[6])
         if key not in tables:
             raise SchemaMetadataError(
-                f"foreign key {name!r} refers to unknown table "
-                f"{key[0]}.{key[1]}"
+                f"foreign key {name!r} refers to unknown table {key[0]}.{key[1]}"
             )
         if not columns or len(columns) != len(ref_columns):
             raise SchemaMetadataError(
-                f"foreign key {name!r} on {key[0]}.{key[1]} has mismatched "
-                "column lists"
+                f"foreign key {name!r} on {key[0]}.{key[1]} has mismatched column lists"
             )
         tables[key].foreign_keys.append(
             ForeignKey(
@@ -454,8 +448,7 @@ def _attach_indexes(
             views[key].indexes.append(index)
         else:
             raise SchemaMetadataError(
-                f"index {index.name!r} refers to unknown relation "
-                f"{key[0]}.{key[1]}"
+                f"index {index.name!r} refers to unknown relation {key[0]}.{key[1]}"
             )
 
 

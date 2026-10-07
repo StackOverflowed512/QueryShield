@@ -306,9 +306,7 @@ def compute_fingerprint(schemas: tuple[Schema, ...]) -> str:
             "tables": [
                 _table_obj(t) for t in sorted(schema.tables, key=lambda t: t.name)
             ],
-            "views": [
-                _view_obj(v) for v in sorted(schema.views, key=lambda v: v.name)
-            ],
+            "views": [_view_obj(v) for v in sorted(schema.views, key=lambda v: v.name)],
         }
         for schema in sorted(schemas, key=lambda s: s.name)
     ]
