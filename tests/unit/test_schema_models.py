@@ -46,9 +46,7 @@ def _col(
     )
 
 
-def _users_table(
-    *, id_type: str = "integer", comment: str | None = "people"
-) -> Table:
+def _users_table(*, id_type: str = "integer", comment: str | None = "people") -> Table:
     return Table(
         schema="app",
         name="users",
@@ -60,9 +58,7 @@ def _users_table(
         unique_constraints=(
             UniqueConstraint(name="users_email_key", columns=("email",)),
         ),
-        indexes=(
-            Index(name="users_pkey", unique=True, primary=True, columns=("id",)),
-        ),
+        indexes=(Index(name="users_pkey", unique=True, primary=True, columns=("id",)),),
         comment=comment,
     )
 
@@ -182,8 +178,12 @@ def test_fingerprint_is_relation_and_column_order_independent() -> None:
 
     c_id = _col("id", "integer", 1, nullable=False)
     c_email = _col("email", "text", 2)
-    t1 = Schema(name="s", tables=(Table(schema="s", name="t", columns=(c_id, c_email)),))
-    t2 = Schema(name="s", tables=(Table(schema="s", name="t", columns=(c_email, c_id)),))
+    t1 = Schema(
+        name="s", tables=(Table(schema="s", name="t", columns=(c_id, c_email)),)
+    )
+    t2 = Schema(
+        name="s", tables=(Table(schema="s", name="t", columns=(c_email, c_id)),)
+    )
     assert compute_fingerprint((t1,)) == compute_fingerprint((t2,))
 
 
@@ -292,9 +292,7 @@ def test_fingerprint_changes_with_foreign_key_target() -> None:
             ),
         )
 
-    assert _fp_with_users(_with_ref("users")) != _fp_with_users(
-        _with_ref("accounts")
-    )
+    assert _fp_with_users(_with_ref("users")) != _fp_with_users(_with_ref("accounts"))
 
 
 def test_fingerprint_changes_with_index_uniqueness() -> None:
@@ -308,9 +306,7 @@ def test_fingerprint_changes_with_index_uniqueness() -> None:
             ),
         )
 
-    assert _fp_with_users(_with_unique(True)) != _fp_with_users(
-        _with_unique(False)
-    )
+    assert _fp_with_users(_with_unique(True)) != _fp_with_users(_with_unique(False))
 
 
 def test_fingerprint_changes_with_materialized_flag() -> None:
