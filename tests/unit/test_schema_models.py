@@ -182,8 +182,12 @@ def test_fingerprint_is_relation_and_column_order_independent() -> None:
 
     c_id = _col("id", "integer", 1, nullable=False)
     c_email = _col("email", "text", 2)
-    t1 = Schema(name="s", tables=(Table(schema="s", name="t", columns=(c_id, c_email)),))
-    t2 = Schema(name="s", tables=(Table(schema="s", name="t", columns=(c_email, c_id)),))
+    t1 = Schema(
+        name="s", tables=(Table(schema="s", name="t", columns=(c_id, c_email)),)
+    )
+    t2 = Schema(
+        name="s", tables=(Table(schema="s", name="t", columns=(c_email, c_id)),)
+    )
     assert compute_fingerprint((t1,)) == compute_fingerprint((t2,))
 
 

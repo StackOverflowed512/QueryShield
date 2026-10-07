@@ -35,7 +35,7 @@ from queryshield.errors import (
     SchemaRetrievalError,
 )
 from queryshield.schema import PostgreSQLSchemaRetriever, SchemaCatalog, SchemaFilter
-from queryshield.schema.postgres import _RawRows, _assemble_catalog
+from queryshield.schema.postgres import _assemble_catalog, _RawRows
 
 
 def _row(*values: Any) -> Row:

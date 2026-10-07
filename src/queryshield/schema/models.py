@@ -20,9 +20,10 @@ Design choices (see ``docs/DECISIONS.md``):
   case-folds or otherwise normalises an identifier, so a lookup is an exact
   match on the stored string. (Rendering an identifier back into SQL — i.e.
   quoting — belongs to the query-construction layer, not here.)
-* **Deterministic structural fingerprint** (ADR-0027). :meth:`SchemaCatalog.from_schemas`
-  derives :attr:`SchemaCatalog.fingerprint` purely from the discovered
-  *structure*; see :func:`compute_fingerprint` for the exact contributors.
+* **Deterministic structural fingerprint** (ADR-0027).
+  :meth:`SchemaCatalog.from_schemas` derives :attr:`SchemaCatalog.fingerprint`
+  purely from the discovered *structure*; see :func:`compute_fingerprint` for
+  the exact contributors.
 """
 
 from __future__ import annotations
