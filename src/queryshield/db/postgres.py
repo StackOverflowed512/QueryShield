@@ -232,7 +232,9 @@ def _collect_secrets(raw_dsn: str) -> tuple[str, ...]:
     except psycopg.Error:
         password = None
     if password:
-        secrets.append(password)
+        # conninfo values are typed str | int; a password is text, but coerce
+        # defensively so the scrubber always redacts a concrete string.
+        secrets.append(str(password))
     return tuple(secrets)
 
 
