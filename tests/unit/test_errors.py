@@ -19,6 +19,7 @@ from queryshield.errors import (
     SchemaError,
     SchemaMetadataError,
     SchemaRetrievalError,
+    SQLParseError,
 )
 
 
@@ -32,6 +33,7 @@ def test_all_errors_share_one_root() -> None:
         SchemaError,
         SchemaRetrievalError,
         SchemaMetadataError,
+        SQLParseError,
     ):
         assert issubclass(exc_type, QueryShieldError)
 
@@ -77,6 +79,30 @@ def test_schema_retrieval_and_metadata_are_distinct() -> None:
 
 
 @pytest.mark.unit
+def test_sql_parse_error_is_distinct_from_the_other_branches() -> None:
+    # Parsing is its own layer: a parse failure must not be catchable as a
+    # database or schema error (a caller catching DatabaseError during a
+    # connection problem must not swallow a parse failure, and vice versa).
+    assert not issubclass(SQLParseError, DatabaseError)
+    assert not issubclass(SQLParseError, SchemaError)
+    assert not issubclass(SQLParseError, ConfigError)
+    assert not issubclass(DatabaseError, SQLParseError)
+    assert not issubclass(SchemaError, SQLParseError)
+
+
+@pytest.mark.unit
+def test_sql_parse_error_preserves_its_cause() -> None:
+    # Fail-closed parsing chains the vendor parser's exception as __cause__ so
+    # internal diagnostics survive even though callers depend on the QueryShield
+    # type alone.
+    vendor = ValueError('syntax error at or near "SELCT"')
+    try:
+        raise SQLParseError("could not parse candidate SQL") from vendor
+    except SQLParseError as exc:
+        assert exc.__cause__ is vendor
+
+
+@pytest.mark.unit
 def test_catching_the_root_catches_every_queryshield_error() -> None:
     for exc in (
         ConfigError("bad config"),
@@ -84,5 +110,6 @@ def test_catching_the_root_catches_every_queryshield_error() -> None:
         DatabaseExecutionError("bad statement"),
         SchemaRetrievalError("catalog query failed"),
         SchemaMetadataError("inconsistent catalog"),
+        SQLParseError("unparseable SQL"),
     ):
         assert isinstance(exc, QueryShieldError)
