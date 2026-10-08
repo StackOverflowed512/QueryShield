@@ -92,3 +92,20 @@ class SchemaMetadataError(SchemaError):
     surprising catalog shape is surfaced, never silently discarded, so a parser
     differential or a privilege anomaly cannot pass unnoticed.
     """
+
+
+class SQLParseError(QueryShieldError):
+    """The supplied SQL could not be parsed into a trustworthy structure.
+
+    Raised by the SQL-parsing layer when the candidate SQL is not valid in the
+    configured dialect. This is a **fail-closed** error: the parser returns a
+    complete, structurally analysed result or it raises; it never returns an
+    empty or partial AST, never "best-effort" parses, and never falls back to a
+    different dialect to make something parse (see ADR-0031). The underlying
+    parser's exception is attached as ``__cause__`` so the diagnostic detail is
+    preserved for logging, while callers depend only on this QueryShield type.
+
+    That the untrusted SQL failed to parse is not itself a security decision —
+    it simply means no trustworthy structure could be derived, and downstream
+    layers that fail closed will therefore deny the request.
+    """
