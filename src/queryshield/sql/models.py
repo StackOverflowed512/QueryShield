@@ -197,12 +197,32 @@ class ParsedQuery:
 
     @property
     def table_names(self) -> tuple[str, ...]:
-        """The referenced relation names, in the order they appear, deduplicated."""
-        return _dedupe(t.name for t in self.tables)
+        """The referenced relations, in first-seen order, deduplicated.
+
+        A relation the SQL qualified with a schema is returned schema-qualified
+        (``public.users``) and deduplicated on that qualified identity, so a
+        same-named relation in a different schema (``sales.users``) stays
+        distinct. Collapsing them to a bare ``users`` would make a cross-schema
+        query look like it touches fewer relations than it does — and these
+        derived views are exactly what a downstream policy layer may read as the
+        set of touched relations, so under-reporting here could hide a real
+        access path. (This mirrors :attr:`function_names`.)
+        """
+
+        def qualified(table: TableReference) -> str:
+            return (
+                table.name if table.schema is None else f"{table.schema}.{table.name}"
+            )
+
+        return _dedupe(qualified(t) for t in self.tables)
 
     @property
     def cte_names(self) -> tuple[str, ...]:
-        """The names of the statement's CTEs, deduplicated, in first-seen order."""
+        """The names of the statement's CTEs, deduplicated, in first-seen order.
+
+        A CTE name is a simple, query-scoped identifier — it is never
+        schema-qualified — so deduplicating on the name alone is already exact.
+        """
         return _dedupe(cte.name for cte in self.ctes)
 
     @property

@@ -383,43 +383,79 @@ class PostgreSQLSQLParser(SQLParser):
             # statement to describe, which is not the same as "safe".
             raise SQLParseError("no SQL statement found in the candidate input")
 
-        root = getattr(statements[0], "stmt", None)
-        if root is None or not isinstance(root, ast_module.Node):
-            raise SQLParseError("the parser returned no statement node")
+        # Analyse *every* statement, not just the first. A multi-statement batch
+        # must be described completely or not at all (ADR-0031): reporting
+        # ``statement_count > 1`` while only extracting the first statement's
+        # relations would silently hide the rest — e.g. the DROP in
+        # ``SELECT ...; DROP TABLE ...`` — which is the opposite of fail-closed.
+        roots: list[object] = []
+        tables: list[TableReference] = []
+        columns: list[ColumnReference] = []
+        functions: list[FunctionCall] = []
+        ctes: list[CommonTableExpression] = []
+        joins: list[JoinType] = []
+        set_operations: list[SetOperation] = []
+        parameters: set[int] = set()
+        literal_count = 0
+        has_subqueries = False
+        has_window_functions = False
 
-        analyzer = _Analyzer(ast_module)
-        analyzer.analyze(root)
+        for statement in statements:
+            root = getattr(statement, "stmt", None)
+            if root is None or not isinstance(root, ast_module.Node):
+                raise SQLParseError("the parser returned no statement node")
+            roots.append(root)
 
-        cte_names = {cte.name for cte in analyzer.ctes}
-        tables = tuple(
-            table
-            for table in analyzer.tables
-            # A bare name that matches a CTE is a reference to that CTE, not a
-            # physical relation (a CTE shadows a table of the same name).
-            if not (table.schema is None and table.name in cte_names)
-        )
+            analyzer = _Analyzer(ast_module)
+            analyzer.analyze(root)
 
-        outer = _outer_select(root)
+            # CTE shadowing is resolved *within* a statement: a bare name that
+            # matches a CTE declared in the same statement is a reference to that
+            # CTE, not a physical relation. Scoping this per statement avoids a
+            # CTE in one statement erasing a real table of the same name in
+            # another (which would under-report the relations touched).
+            statement_cte_names = {cte.name for cte in analyzer.ctes}
+            tables.extend(
+                table
+                for table in analyzer.tables
+                if not (table.schema is None and table.name in statement_cte_names)
+            )
+            columns.extend(analyzer.columns)
+            functions.extend(analyzer.functions)
+            ctes.extend(analyzer.ctes)
+            joins.extend(analyzer.joins)
+            set_operations.extend(analyzer.set_operations)
+            parameters.update(analyzer.parameters)
+            literal_count += analyzer.literal_count
+            has_subqueries = has_subqueries or analyzer.has_subqueries
+            has_window_functions = has_window_functions or analyzer.has_window_functions
+
+        # The structural flags describe the whole input: a flag is set when the
+        # feature appears in *any* statement's outermost query.
+        outers = [_outer_select(root) for root in roots]
 
         return ParsedQuery(
-            statement_type=_classify(root),
+            # ``statement_type`` is the kind of the first statement; a batch is
+            # signalled by ``statement_count``/``is_multi_statement``, and the
+            # relation/column/function lists above cover every statement.
+            statement_type=_classify(roots[0]),
             original_sql=sql,
             statement_count=len(statements),
-            tables=tables,
-            columns=tuple(analyzer.columns),
-            functions=tuple(analyzer.functions),
-            ctes=tuple(analyzer.ctes),
-            joins=tuple(analyzer.joins),
-            set_operations=tuple(analyzer.set_operations),
-            parameters=tuple(sorted(analyzer.parameters)),
-            literal_count=analyzer.literal_count,
-            has_subqueries=analyzer.has_subqueries,
-            has_distinct=_present(outer, "distinctClause"),
-            has_grouping=_present(outer, "groupClause"),
-            has_having=_present(outer, "havingClause"),
-            has_ordering=_present(outer, "sortClause"),
-            has_limit=_present(outer, "limitCount"),
-            has_offset=_present(outer, "limitOffset"),
-            has_window_functions=analyzer.has_window_functions,
-            has_locking_clause=_present(outer, "lockingClause"),
+            tables=tuple(tables),
+            columns=tuple(columns),
+            functions=tuple(functions),
+            ctes=tuple(ctes),
+            joins=tuple(joins),
+            set_operations=tuple(set_operations),
+            parameters=tuple(sorted(parameters)),
+            literal_count=literal_count,
+            has_subqueries=has_subqueries,
+            has_distinct=any(_present(o, "distinctClause") for o in outers),
+            has_grouping=any(_present(o, "groupClause") for o in outers),
+            has_having=any(_present(o, "havingClause") for o in outers),
+            has_ordering=any(_present(o, "sortClause") for o in outers),
+            has_limit=any(_present(o, "limitCount") for o in outers),
+            has_offset=any(_present(o, "limitOffset") for o in outers),
+            has_window_functions=has_window_functions,
+            has_locking_clause=any(_present(o, "lockingClause") for o in outers),
         )
