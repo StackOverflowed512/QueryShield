@@ -9,36 +9,41 @@
 
 ## Current status (read carefully)
 
-**Phase: 3 — Dynamic PostgreSQL schema introspection.**
+**Phase: 4 — SQL parsing & AST foundation.**
 
-Phases 1 (installable, testable skeleton) and 2 (configuration system +
-PostgreSQL adapter foundation) are complete and merged to `main` (Phase 2 via
-PR #3). Phase 3 adds **one capability and nothing else**: dynamic **schema
-introspection**. A `SchemaRetriever` abstraction with a concrete
-`PostgreSQLSchemaRetriever` **reuses the Phase 2 `DatabaseAdapter`** (no second
-connection path) to introspect a live database through `pg_catalog` — in **one
-read-only transaction** of **six bounded, parameterised** queries, honouring
-`has_table_privilege` — and returns an immutable **`SchemaCatalog`** snapshot of
-strongly typed, frozen domain models (schemas, tables, views, columns,
-primary/foreign/unique keys, indexes) carrying a deterministic structural
-**fingerprint**. Identifiers are preserved verbatim; nothing deployment-specific
-is hard-coded (schema selection is a generic, config-driven `SchemaFilter`).
+Phases 1 (installable, testable skeleton), 2 (configuration system + PostgreSQL
+adapter foundation, PR #3), and 3 (dynamic PostgreSQL schema introspection,
+PR #4 + follow-ups PR #5) are complete and merged to `main`. Phase 4 adds **one
+capability and nothing else**: turning an **untrusted SQL string** into a
+QueryShield-owned, immutable **structural description**. A `SQLParser`
+abstraction with a concrete `PostgreSQLSQLParser` built on **pglast** (which
+binds **libpg_query — PostgreSQL's own parser**, removing the parser differential
+by construction) parses a candidate SQL string into a frozen **`ParsedQuery`**:
+statement kind (read from the **AST**, never the string), statement count,
+extracted tables/columns/functions/CTEs/joins/set-operations, bound-parameter
+indexes, a literal count, and structural feature flags. Classification is
+AST-driven — there is **no** `str.startswith`, no `sql.split(";")`, and no regex
+anywhere in the SQL layer. The parser is stateless, deterministic, and fails
+closed: any unparseable input raises `SQLParseError` (with the vendor cause
+chained), never a partial result.
 
-**Still *not* implemented** (planned): the Mistral LLM, SQL parsing/AST, the
-policy engine, rewriting, cost checks, the cache, audit, the HTTP API,
-`RequestContext`, and any execution path for *arbitrary user- or LLM-supplied*
-SQL. The schema layer only *describes* structure — it makes **no** security or
-authorization decision, performs no NL→SQL generation, and never executes
-candidate SQL. Nothing in this file or in `docs/` should be read as a claim that
+**Still *not* implemented** (planned): the Mistral LLM, the policy engine,
+rewriting, cost checks, the cache, audit, the HTTP API, `RequestContext`, and any
+execution path for *arbitrary user- or LLM-supplied* SQL. The parser only
+*describes* structure — it makes **no** security or authorization decision, does
+**not** resolve names against the schema catalog, performs no NL→SQL generation,
+and never executes candidate SQL. `ParsedQuery` deliberately carries **no**
+safety verdict. Nothing in this file or in `docs/` should be read as a claim that
 an unimplemented component already works.
 
-> **Validation note:** Phase 2 is merged and green in CI (PR #3). The Phase 3
-> source and tests have been written but **not yet executed in this
-> environment** — the only local interpreter is Python 3.9 while the package
-> requires ≥ 3.11 (so `queryshield` cannot even import locally), and the
-> sandbox's Bash command-safety classifier is intermittently unavailable. CI
-> (quality matrix on 3.11–3.13 + PostgreSQL integration against `postgres:16`)
-> is the authoritative gate. See the Validation status in
+> **Validation note:** Phases 2 and 3 are merged and green in CI (PR #3, PR #4,
+> PR #5). The Phase 4 source and tests have been written but **not yet executed
+> in this environment** — the only local interpreter is Python 3.9 while the
+> package requires ≥ 3.11 (so `queryshield` cannot even import locally), pglast
+> is not installed locally, and the sandbox's Bash command-safety classifier is
+> intermittently unavailable. CI (quality matrix on 3.11–3.13 + PostgreSQL
+> integration against `postgres:16`) is the authoritative gate. See the
+> Validation status in
 > [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 The authoritative, always-current status is
@@ -141,16 +146,17 @@ are explicitly undecided and tracked in [`docs/DECISIONS.md`](docs/DECISIONS.md)
 The **tooling** choices (Python ≥ 3.11, `src/` layout, Hatchling, `pytest`,
 `ruff`, `mypy`) were adopted in Phase 1. Phase 2 adopts the **config** and
 **PostgreSQL driver** choices and pins their libraries in `pyproject.toml`
-(`pydantic` v2, `PyYAML`, `psycopg` 3 + `psycopg_pool`). The remaining runtime
-choices (SQL parser, LLM client, cache, HTTP API) are **not** installed yet —
-each runtime library is introduced only in the phase that needs it.
+(`pydantic` v2, `PyYAML`, `psycopg` 3 + `psycopg_pool`). Phase 4 adopts the **SQL
+parser** choice and pins `pglast` (libpg_query). The remaining runtime choices
+(LLM client, cache, HTTP API) are **not** installed yet — each runtime library is
+introduced only in the phase that needs it.
 
 | Concern              | Intended choice                                   | Firmness |
 |----------------------|---------------------------------------------------|----------|
 | Language             | Python ≥ 3.11                                     | adopted  |
 | Packaging / layout   | `pyproject.toml` (PEP 621), `src/` layout, Hatchling | adopted |
 | Config & validation  | `pydantic` v2 + explicit loader + `PyYAML` (not `pydantic-settings`) | adopted (ADR-0016/0017) |
-| SQL parsing / AST    | `sqlglot` vs `pglast` (libpg_query)               | **open** |
+| SQL parsing / AST    | `pglast` (libpg_query — PostgreSQL's own parser)  | adopted (ADR-0003) |
 | PostgreSQL driver    | `psycopg` 3 (+`psycopg_pool`), async              | adopted (ADR-0018/0019) |
 | LLM client           | Mistral official SDK / HTTP; key from env         | proposed |
 | Cache                | Redis (`redis-py`) + in-memory default            | proposed |
@@ -258,7 +264,7 @@ planned vs. implemented explicitly.
 
 See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 current (real) tree and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-**planned** `src/queryshield/` package layout. As of Phase 3 the repository is:
+**planned** `src/queryshield/` package layout. As of Phase 4 the repository is:
 
 ```
 QueryShield/
@@ -284,12 +290,17 @@ QueryShield/
 │       │   ├── __init__.py    # curated db exports
 │       │   ├── base.py        # DatabaseAdapter ABC + DatabaseSession Protocol
 │       │   └── postgres.py    # PostgreSQLAdapter (psycopg 3 + psycopg_pool)
-│       └── schema/
-│           ├── __init__.py    # curated schema exports
-│           ├── base.py        # SchemaRetriever ABC (retrieve() -> SchemaCatalog)
-│           ├── models.py      # frozen domain models + structural fingerprint
-│           ├── filter.py      # SchemaFilter (generic include/exclude selection)
-│           └── postgres.py    # PostgreSQLSchemaRetriever (pg_catalog introspection)
+│       ├── schema/
+│       │   ├── __init__.py    # curated schema exports
+│       │   ├── base.py        # SchemaRetriever ABC (retrieve() -> SchemaCatalog)
+│       │   ├── models.py      # frozen domain models + structural fingerprint
+│       │   ├── filter.py      # SchemaFilter (generic include/exclude selection)
+│       │   └── postgres.py    # PostgreSQLSchemaRetriever (pg_catalog introspection)
+│       └── sql/
+│           ├── __init__.py    # curated sql exports
+│           ├── base.py        # SQLParser ABC (parse(sql) -> ParsedQuery)
+│           ├── models.py      # frozen ParsedQuery + StrEnum vocabularies
+│           └── postgres.py    # PostgreSQLSQLParser (pglast / libpg_query)
 └── tests/
     ├── unit/
     │   ├── test_package.py
@@ -298,7 +309,9 @@ QueryShield/
     │   ├── test_dsn.py
     │   ├── test_schema_models.py
     │   ├── test_schema_filter.py
-    │   └── test_schema_retriever.py
+    │   ├── test_schema_retriever.py
+    │   ├── test_sql_models.py
+    │   └── test_sql_parser.py
     └── integration/
         ├── README.md          # how to run the PostgreSQL integration tests
         ├── conftest.py        # skip-unless-DSN fixtures; disposable test table

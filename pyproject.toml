@@ -40,12 +40,21 @@ classifiers = [
 #                 ADR-0019 / ADR-0020). The [binary] extra ships prebuilt
 #                 wheels so local and CI installs are reproducible without a
 #                 build toolchain; the [pool] extra provides psycopg_pool.
-# No Mistral client, SQL parser, or cache dependency yet — those belong to the
-# later phases that use them.
+# Phase 3 (schema introspection) introduced no new runtime dependency: it reuses
+# the existing psycopg adapter. Phase 4 adds exactly one, for the SQL parsing /
+# AST foundation:
+#   * pglast    — Python bindings for libpg_query, which is PostgreSQL's *own*
+#                 parser (ADR-0003). Using the real grammar eliminates the
+#                 parser differential by construction. The declared upper bound
+#                 (`<8`) exists so a future major release cannot silently swap
+#                 the bundled libpg_query grammar underneath QueryShield.
+# No Mistral client, cache, or HTTP dependency yet — those belong to the later
+# phases that use them.
 dependencies = [
     "pydantic>=2,<3",
     "PyYAML>=6",
     "psycopg[binary,pool]>=3.2,<4",
+    "pglast>=6,<8",
 ]
 
 [project.optional-dependencies]

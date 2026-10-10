@@ -1,18 +1,20 @@
 # QueryShield — Architecture
 
-> **Status: Phase 3 (dynamic PostgreSQL schema introspection).**
-> This document describes the **intended** end-state architecture. Three
+> **Status: Phase 4 (SQL parsing & AST foundation).**
+> This document describes the **intended** end-state architecture. Four
 > foundations are now implemented — the **configuration system**
 > ([§7](#7-configuration-system-implemented-in-phase-2)), the **database
 > abstraction + PostgreSQL adapter**
-> ([§12](#12-phase-2-implementation-configuration-and-database-layer)), and
+> ([§12](#12-phase-2-implementation-configuration-and-database-layer)),
 > **dynamic schema introspection**
-> ([§13](#13-phase-3-implementation-schema-introspection)) — together with the
-> typed error hierarchy and a library logging handler. **The remaining pipeline
-> components are still not implemented**: no LLM provider, SQL parsing/AST,
-> policy engine, rewriter, cost checks, secure cache, query execution for
-> arbitrary user SQL, or audit. Where a distinction matters, planned behavior is
-> called out as *planned*. The live build state is tracked in
+> ([§13](#13-phase-3-implementation-schema-introspection)), and the **SQL
+> parsing & AST foundation**
+> ([§14](#14-phase-4-implementation-sql-parsing--ast-foundation)) — together with
+> the typed error hierarchy and a library logging handler. **The remaining
+> pipeline components are still not implemented**: no LLM provider, policy
+> engine, rewriter, cost checks, secure cache, query execution for arbitrary user
+> SQL, or audit. Where a distinction matters, planned behavior is called out as
+> *planned*. The live build state is tracked in
 > [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ---
@@ -79,7 +81,7 @@ flowchart TD
 | **Orchestrator** (`QueryShield`) | Owns the pipeline, threads `RequestContext`, enforces fail-closed semantics, assembles the result and audit record. | Trusted |
 | **SchemaRetriever** *(implemented — `PostgreSQLSchemaRetriever`, Phase 3)* | Dynamically introspects the target database via `pg_catalog` and returns an immutable `SchemaCatalog` snapshot carrying a deterministic structural fingerprint. Never a static schema. *(Phase 3 filters relations by the configured role's `has_table_privilege`; per-principal access-filtering and caching/versioning are planned.)* | Trusted |
 | **LLMProvider** (`MistralProvider`) | Builds a prompt from the NL request + retrieved schema and returns candidate SQL. Stateless w.r.t. security. | **Untrusted output** |
-| **SQL Parser / AST** | Parses candidate SQL into a structured AST using a real SQL grammar. Rejects unparseable input (fail-closed). | Trusted |
+| **SQL Parser / AST** *(implemented — `PostgreSQLSQLParser`, Phase 4)* | Parses candidate SQL into a QueryShield-owned, structured AST using a real SQL grammar — pglast / libpg_query, PostgreSQL's *own* parser — so the parser differential is removed by construction. Classifies the statement and detects multi-statement input **from the AST**, never from the string. Rejects unparseable input (fail-closed). *(Phase 4 only *describes* structure: it does not resolve names against a catalog and makes no security decision.)* | Trusted |
 | **Policy Engine** (`PolicyRule`s) | Evaluates the AST against configured, pluggable rules and returns a structured decision. No regex soup, no hard-coded table lists. | Trusted |
 | **Rewriter / Validator** | Applies deterministic, policy-mandated transforms (e.g., enforced `LIMIT`, tenant predicates) and **re-parses** to confirm invariants. | Trusted |
 | **Cost / Complexity Checks** | Static complexity analysis plus optional planner cost via `EXPLAIN` (never `EXPLAIN ANALYZE`), compared to configured thresholds. | Trusted |
@@ -89,18 +91,22 @@ flowchart TD
 | **AuditStore** | Persists append-only, structured audit records (incl. denials/errors). | Trusted |
 | **EventPublisher** | Emits pipeline events to downstream analytics/streaming sinks. | Trusted |
 
-> **Implemented as of Phase 3:** the **DatabaseAdapter**
+> **Implemented as of Phase 4:** the **DatabaseAdapter**
 > (`PostgreSQLAdapter`), the **configuration system** ([§7](#7-configuration-system-implemented-in-phase-2)),
 > the **SchemaRetriever** (`PostgreSQLSchemaRetriever`,
-> [§13](#13-phase-3-implementation-schema-introspection)), the typed **error
-> hierarchy**, and a library **logging** handler. The adapter is the *trusted
-> executor* of already-validated SQL and the retriever only *describes* schema
-> structure — neither decides whether a query is authorized; that is the job of
-> the (still unimplemented) parser, policy engine, and rewriter. See
+> [§13](#13-phase-3-implementation-schema-introspection)), the **SQL Parser**
+> (`PostgreSQLSQLParser`,
+> [§14](#14-phase-4-implementation-sql-parsing--ast-foundation)), the typed
+> **error hierarchy**, and a library **logging** handler. The adapter is the
+> *trusted executor* of already-validated SQL, the retriever only *describes*
+> schema structure, and the parser only *describes* the structure of a candidate
+> SQL string — none of them decides whether a query is authorized; that is the
+> job of the (still unimplemented) policy engine and rewriter. See
 > [§12](#12-phase-2-implementation-configuration-and-database-layer),
-> [§13](#13-phase-3-implementation-schema-introspection), and the trust-boundary
-> docstring in `src/queryshield/db/base.py`. Every other component in this table
-> is still *planned*.
+> [§13](#13-phase-3-implementation-schema-introspection),
+> [§14](#14-phase-4-implementation-sql-parsing--ast-foundation), and the
+> trust-boundary docstring in `src/queryshield/db/base.py`. Every other component
+> in this table is still *planned*.
 
 ---
 
@@ -611,3 +617,155 @@ downstream cache or drift check wants.
   system-schema exclusion; fingerprint behaviour; and a connection failure
   raising (never an empty catalog). It **skips** unless
   `QUERYSHIELD_TEST_DATABASE_URL` is set and runs in CI on `postgres:16`.
+
+## 14. Phase 4 implementation: SQL parsing & AST foundation
+
+Phase 4 adds **one capability and nothing else**: turning an **untrusted SQL
+string** — the kind of string a later phase will receive from the LLM — into a
+QueryShield-owned, immutable **structural description**. It introduces the
+`SQLParser` abstraction (its first real consumer now exists, so it is no longer
+speculative) and a concrete `PostgreSQLSQLParser` built on **pglast**, which
+binds **libpg_query** — PostgreSQL's *own* parser extracted into a standalone
+library (ADR-0003). There is still **no** LLM, policy engine, rewriter, cost
+check, cache, audit, `RequestContext`, or execution path for arbitrary SQL. The
+parser only *describes* the structure it independently derives from the string;
+it decides nothing, resolves no names against a catalog, and executes nothing.
+
+> **Why pglast and not a hand-written or regex classifier.** A difference
+> between the grammar QueryShield analyses and the grammar PostgreSQL executes is
+> a *parser differential* — a security risk called out in `CLAUDE.md` §3 and
+> [§10](#10-known-architectural-risks-tracked-not-yet-mitigated). Parsing with
+> PostgreSQL's own grammar removes that differential **by construction**: the two
+> cannot disagree because they are the same parser. This is also why there is no
+> `str.startswith`, no `sql.split(";")`, and no regular expression anywhere in
+> the SQL layer — classification is read from the AST, never from the text.
+
+### 14.1 Modules
+
+```
+src/queryshield/
+├── __init__.py        # __version__ = "0.4.0"; curated public API; NullHandler
+├── errors.py          # … + SQLParseError (its own QueryShieldError branch)
+└── sql/
+    ├── __init__.py     # SQLParser, ParsedQuery + supporting types, and
+    │                   #   PostgreSQLSQLParser  (curated)
+    ├── base.py         # abstract SQLParser: async parse(sql) -> ParsedQuery
+    ├── models.py       # frozen, slotted owned model + StrEnum vocabularies
+    └── postgres.py     # PostgreSQLSQLParser (the only module that imports pglast)
+```
+
+As with the Phase 2 adapter and the Phase 3 retriever, the top-level public API
+stays small: the **`SQLParseError`** type is re-exported from `queryshield`, but
+the concrete `PostgreSQLSQLParser` and the `ParsedQuery` model are **not** —
+callers import them from `queryshield.sql`, keeping the vendor (pglast) at the
+edge (ADR-0029, consistent with the adapter/retriever convention).
+
+### 14.2 Owned model & describe-never-decide
+
+`sql/models.py` defines the vocabulary of "what this SQL string *is*" as
+**frozen, slotted dataclasses** paired with `StrEnum` classifications
+(`StatementType`, `JoinType`, `SetOperationType`) (ADR-0029). The top-level
+`ParsedQuery` carries the statement kind, the statement **count** (so a
+semicolon batch is represented, never silently reduced), the extracted
+references (`TableReference`, `ColumnReference`, `FunctionCall`,
+`CommonTableExpression`, `SetOperation`), the set of bound **parameter** indexes,
+a **literal** count, and a set of boolean structural flags (subqueries, DISTINCT,
+GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, window functions, locking clause).
+
+- **No safety verdict (ADR-0029).** `ParsedQuery` deliberately has **no**
+  `is_safe` / `allowed` / `authorized` field, and a unit test asserts none is
+  ever added. The parser's job is to *describe* structure for a later
+  deterministic policy layer to judge; a "safe" field here would be exactly the
+  kind of trusted-by-accident signal the architecture forbids (the SQL string is
+  untrusted, and so is a naive reading of its structure).
+- **Verbatim identifiers (ADR-0032).** Every extracted name is the exact
+  identifier the parser reports: a quoted mixed-case or spaced identifier
+  survives as written, and QueryShield never case-folds — mirroring the schema
+  layer's rule (ADR-0026) so the two can be compared on an exact-match basis
+  later.
+- **Deterministic derived views.** `table_names`, `cte_names`, and
+  `function_names` deduplicate in first-seen order, so equal SQL yields equal —
+  and comparable — results. `ParsedQuery` is frozen, so no partially-built result
+  can escape mid-analysis.
+
+### 14.3 `PostgreSQLSQLParser` (analysis design)
+
+The parser is **stateless and side-effect free**: it holds no connection, takes
+no database session, and executes nothing. Each `parse()` call is independent and
+**deterministic** — the same SQL string always yields an equal `ParsedQuery`.
+
+- **Classification comes from the AST, never the string (ADR-0030).** The
+  statement kind is a lookup on the parsed node's class name
+  (`SelectStmt → SELECT`, `DropStmt → DROP`, …); an unrecognised node is
+  `StatementType.UNKNOWN` — the **fail-safe bucket**, never a stand-in for
+  "harmless". A leading comment, unusual whitespace, or a semicolon inside a
+  string literal cannot fool it, because none of those change the AST.
+- **The walk is reflective, not typed against pglast's class tree.** pglast's
+  node classes are generated from PostgreSQL's `parsenodes` and expose their
+  fields through `__slots__`. The analyzer reads those slots, recurses, and
+  dispatches on `type(node).__name__`. It therefore depends only on pglast's
+  *stable* surface — `parse_sql`, `ParseError`, node class names, and
+  `__slots__` — not on node constructors or a visitor API, so a pglast release
+  that reshapes its Python wrapper cannot silently change what we observe. pglast
+  is imported **lazily**, so importing `queryshield` or the SQL *models* never
+  loads the compiled extension until a parse is actually requested.
+- **CTE shadowing.** A bare `FROM` reference whose name matches a WITH clause is a
+  reference to that CTE, not a physical relation, so it is filtered out of the
+  physical table list while the CTE name is reported separately — the structure a
+  policy layer needs to tell "reads table `orders`" from "reads CTE `sales`".
+
+### 14.4 Error contract & trust boundary
+
+`SQLParseError` is its **own** branch of `QueryShieldError` — not under
+`DatabaseError` or `SchemaError` — because a parse failure is neither a
+reachability nor a schema problem:
+
+| Situation | Raised | Rationale |
+|-----------|--------|-----------|
+| pglast cannot parse the string | `SQLParseError` (chained via `from`) | Unparseable input fails closed; the vendor parser's exception survives as `__cause__` for diagnostics. |
+| Empty, whitespace-only, or comment-only input | `SQLParseError` | There is no statement to describe — which is **not** the same as "safe". |
+| Input is not a `str` | `SQLParseError` | The one and only input is a SQL string; anything else is rejected before pglast is touched. |
+
+**Fail closed, all-or-nothing (ADR-0031).** Nothing here returns a partial
+structure, and there is no fallback to another dialect — pglast *is* PostgreSQL's
+parser, so there is no second grammar to try. This layer is **describe-only**: it
+makes no security or authorization decision, performs no NL→SQL generation, does
+not resolve names against the schema catalog, and never executes the SQL it
+parses. Those are later, deterministic concerns — not something the parser or the
+LLM does.
+
+### 14.5 Known limitations (deliberately accepted this phase)
+
+These are the *shape of what the parser reports*, not safety claims; they are
+tracked in [`docs/IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md):
+
+- **DDL target names are not lowered to `TableReference`.** `DROP TABLE x` is
+  classified `DROP`, but `x` is named through a different AST node shape than a
+  `FROM` reference and is not surfaced as a table yet.
+- **An implicit comma join is not a `JoinType`.** PostgreSQL models
+  `FROM a, b` as a list, not a join node, so it is not represented in `joins`.
+- **`CROSS JOIN` is reported as `JoinType.INNER`,** because PostgreSQL represents
+  both with the same join node.
+- **No name resolution.** Extracted names are *as written in the string*; binding
+  them to real catalog objects needs the Phase 3 `SchemaCatalog` and the policy
+  layer, which are out of scope here.
+
+### 14.6 Tests
+
+- **Unit (no database, no network).** `test_sql_models.py` exercises the owned
+  model in isolation — no parser, no pglast — pinning immutability, verbatim
+  identifiers, first-seen-order deduplication, `UNION` ≠ `UNION ALL`, and the
+  **absence of any safety verdict**. `test_sql_parser.py` drives the real pglast
+  parser in-process (deterministic and fast, so it is a unit test): it asserts
+  AST-driven classification across statement kinds; that `SET` is `UNKNOWN` and
+  **not** misread as a `SELECT`; that a leading comment does not change a `DROP`;
+  verbatim schema/alias/case preservation; column/star, function, CTE, join, and
+  set-operation extraction; parameter-vs-literal counting; the SELECT feature
+  flags; multi-statement **detection without truncation**; a semicolon inside a
+  literal counting as one statement; a parametrized sweep of malformed input all
+  **failing closed** with the parser cause chained; non-string rejection;
+  determinism; and that even a well-formed `DROP` carries no safety verdict.
+- **Integration.** None is required in this phase: pglast parses in-process with
+  no external service, so the unit tests exercise the real parser directly. The
+  parser does not touch PostgreSQL — name resolution against a live catalog
+  arrives with the policy layer in a later phase.

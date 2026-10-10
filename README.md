@@ -8,17 +8,21 @@ PostgreSQL database that *executes* it. It exists to close the gap between "an
 LLM can write SQL" and "it is safe to run LLM-written SQL against a production
 database."
 
-> ### ⚠️ Project status: Phase 3 — dynamic PostgreSQL schema introspection
+> ### ⚠️ Project status: Phase 4 — SQL parsing & AST foundation
 >
 > This repository implements, so far: a typed, validated **configuration
 > system**; a **PostgreSQL database adapter** (pooled, with a real health check,
-> read-only-by-default transactions, and parameterised execution); and — new in
-> Phase 3 — **dynamic schema introspection** that turns a live database into an
-> immutable, fingerprinted `SchemaCatalog` snapshot. The rest of the
-> architecture below — the LLM, SQL parsing, the policy engine, rewriting, cost
-> checks, caching, execution of arbitrary user/LLM SQL, audit, and the HTTP API
-> — is still **planned**, and the schema layer itself makes **no** security
-> decision and generates/executes **no** SQL. Track what actually exists in
+> read-only-by-default transactions, and parameterised execution); **dynamic
+> schema introspection** that turns a live database into an immutable,
+> fingerprinted `SchemaCatalog` snapshot; and — new in Phase 4 — a **SQL parser**
+> that turns an untrusted SQL string into an immutable `ParsedQuery` structural
+> description using **pglast** (libpg_query — PostgreSQL's own parser), with
+> AST-driven classification and no regex. The rest of the architecture below —
+> the LLM, the policy engine, rewriting, cost checks, caching, execution of
+> arbitrary user/LLM SQL, audit, and the HTTP API — is still **planned**, and
+> neither the schema layer nor the parser makes **any** security decision: the
+> parser only *describes* structure (it resolves no names and executes no SQL).
+> Track what actually exists in
 > [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md), which is the
 > authoritative source of truth.
 
@@ -76,11 +80,21 @@ Cost/Complexity → Secure Cache → PostgreSQL → Result → Audit/Analytics
   deterministic structural **fingerprint**. Identifiers are preserved verbatim;
   schema selection is a generic, config-driven `SchemaFilter` (no hard-coded
   schema names). Covered by unit tests and real-PostgreSQL integration tests.
+- *Phase 4 — SQL parsing & AST:* a `SQLParser` abstraction and a
+  `PostgreSQLSQLParser` built on **pglast** (libpg_query — PostgreSQL's own
+  parser, so there is no parser differential) that turns an untrusted SQL string
+  into an immutable **`ParsedQuery`**: statement kind read from the **AST** (never
+  from the string — no `startswith`, no `split(";")`, no regex), statement count,
+  extracted tables/columns/functions/CTEs/joins/set-operations, bound-parameter
+  indexes, a literal count, and structural feature flags. Stateless,
+  deterministic, and fail-closed — unparseable input raises `SQLParseError` (with
+  the vendor cause chained), never a partial result. `ParsedQuery` carries **no**
+  safety verdict. Covered by model unit tests and real-pglast parser unit tests.
 
-**Not implemented yet (planned):** the Mistral LLM provider, SQL parsing/AST,
-the deterministic policy engine, query rewriting/validation, cost/complexity
-checks, the secure cache, execution of arbitrary user/LLM SQL, audit/analytics,
-the HTTP API, and `RequestContext`. See
+**Not implemented yet (planned):** the Mistral LLM provider, the deterministic
+policy engine, query rewriting/validation, cost/complexity checks, the secure
+cache, execution of arbitrary user/LLM SQL, audit/analytics, the HTTP API, and
+`RequestContext`. See
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 ## Requirements
@@ -99,7 +113,7 @@ python -m pip install -e ".[dev]"
 
 This installs QueryShield in editable mode together with the development tools
 (`pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`). Runtime dependencies
-(`pydantic`, `PyYAML`, `psycopg`) are pulled in automatically.
+(`pydantic`, `PyYAML`, `psycopg`, `pglast`) are pulled in automatically.
 
 ## Common tasks
 
@@ -142,7 +156,8 @@ src/queryshield/       # the package
 ├── errors.py          #   typed exception hierarchy
 ├── config.py          #   pydantic config models + load_config()
 ├── db/                #   DatabaseAdapter abstraction + PostgreSQLAdapter
-└── schema/            #   SchemaRetriever + PostgreSQLSchemaRetriever + models
+├── schema/            #   SchemaRetriever + PostgreSQLSchemaRetriever + models
+└── sql/               #   SQLParser + PostgreSQLSQLParser (pglast) + ParsedQuery
 tests/unit/            # fast, isolated unit tests (no database)
 tests/integration/     # real PostgreSQL-backed adapter + schema tests
 docs/                  # architecture, status, and decision records
@@ -175,10 +190,11 @@ supported variable with safe-default annotations. Never commit real secrets;
 ## Technology
 
 Python ≥ 3.11 · Hatchling · pytest (+pytest-asyncio) · ruff · mypy · **pydantic
-v2** · **PyYAML** · **psycopg 3** (+`psycopg_pool`) — all adopted · PostgreSQL ·
-Mistral API (hosted, via API key) · Redis (optional) — introduced in later
-phases. See [`docs/DECISIONS.md`](docs/DECISIONS.md) for firmness and open
-choices — notably, the SQL parsing library is not yet finalized (ADR-0003).
+v2** · **PyYAML** · **psycopg 3** (+`psycopg_pool`) · **pglast** (libpg_query) —
+all adopted · PostgreSQL · Mistral API (hosted, via API key) · Redis (optional) —
+introduced in later phases. See [`docs/DECISIONS.md`](docs/DECISIONS.md) for
+firmness and open choices — the SQL parsing library is now finalized as pglast
+(ADR-0003).
 
 ## License
 

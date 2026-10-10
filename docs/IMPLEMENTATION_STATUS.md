@@ -2,7 +2,7 @@
 
 > **This file is the authoritative source of truth for what actually exists.**
 > If any other document implies a feature works, this file overrides it.
-> Last updated: **2026-10-05** (Phase 3 — dynamic PostgreSQL schema introspection).
+> Last updated: **2026-10-08** (Phase 4 — SQL parsing & AST foundation).
 
 Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (intentional)
 
@@ -10,42 +10,49 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (inte
 
 ## Current phase
 
-**Phase 3 — Dynamic PostgreSQL schema introspection.** 🚧 (built; CI validation pending)
+**Phase 4 — SQL parsing & AST foundation.** 🚧 (built; CI validation pending)
 
-Phases 1 (installable, testable project skeleton) and 2 (configuration system +
-PostgreSQL adapter foundation) are complete and merged to `main` — Phase 2
-landed via PR #3 after its CI gate ran green. Phase 3 adds **one capability and
-nothing else**: dynamic **schema introspection**. A `SchemaRetriever` abstraction
-with a concrete `PostgreSQLSchemaRetriever` reuses the Phase 2 `DatabaseAdapter`
-(no second connection path) to introspect a live database through `pg_catalog` —
-in one read-only transaction of six bounded, parameterised queries, honouring
-`has_table_privilege` — and returns an immutable **`SchemaCatalog`** snapshot of
-frozen, strongly typed domain models (schemas, tables, views, columns,
-primary / foreign / unique keys, indexes) with a deterministic structural
-**fingerprint**. Schema selection is a generic, config-driven **`SchemaFilter`**
-(no hard-coded schema names); identifiers are preserved verbatim.
+Phases 1 (installable, testable project skeleton), 2 (configuration system +
+PostgreSQL adapter foundation), and 3 (dynamic schema introspection) are complete
+and merged to `main` — Phase 2 via PR #3, Phase 3 via PR #4 and follow-ups on
+`main` (commits `ad26b02`, `ac77b7b`, `666bdb9`, `e8bbe06`, merged as PR #5). The
+Phase 3 CI gate has run **green** on `main`. Phase 4 adds **one capability and
+nothing else**: a deterministic **SQL parsing & AST foundation**.
 
-**Deliberately *not* in Phase 3** (deferred to later phases): the Mistral LLM
-provider, SQL parsing / AST, policy / security rules, query rewriting, cost
+A `SQLParser` abstraction with a concrete `PostgreSQLSQLParser` parses an
+untrusted SQL string into a QueryShield-owned, immutable **`ParsedQuery`** using
+**pglast** — Python bindings for **libpg_query**, which *is* PostgreSQL's own
+parser — so the parser differential is removed by construction (ADR-0003).
+Statement classification and multi-statement detection are read from the **AST**,
+never from the string: no `str.startswith`, no `sql.split(";")`, no regex
+(ADR-0030). The parser is **fail-closed and all-or-nothing**: it returns a
+complete structure or raises a chained `SQLParseError`, never a partial result,
+never a dialect retry (ADR-0031). Identifiers are preserved **verbatim** — never
+case-folded (ADR-0032) — and the original SQL is retained unchanged. Everything
+it returns is a QueryShield-owned type, not a pglast node (ADR-0029). The parser
+is stateless: it takes no database session and never executes SQL.
+
+**Deliberately *not* in Phase 4** (deferred to later phases): a query
+*fingerprint* (deferred until the cache/cost layers need it), the Mistral LLM
+provider, the deterministic policy engine, query rewriting/validation, cost
 checks, caching, audit, and any execution path for *arbitrary user- or
-LLM-supplied* SQL. The schema layer only *describes* structure: it makes **no**
-security or authorization decision, performs no NL→SQL generation, and never
-executes candidate SQL. Binding the retriever to a per-request `RequestContext`
-principal and to a dedicated `SchemaConfig` section is also deferred (ADR-0028).
+LLM-supplied* SQL. The parser only *describes* structure: it makes **no** security
+or authorization decision, performs no NL→SQL generation, and never executes
+candidate SQL.
 
 > **⚠️ Validation status (read this before trusting the checkmarks below):**
-> Phase 2 is merged and green in CI (PR #3). The Phase 3 source and tests have
-> been **written**, but the mandated "actually run the tooling" validation —
+> Phases 1–3 are merged and green in CI. The Phase 4 source and tests have been
+> **written**, but the mandated "actually run the tooling" validation —
 > `pip install -e ".[dev]"`, `pytest -m "not integration"`, `ruff check .`,
 > `ruff format --check .`, `mypy` — has **not yet been executed in this
-> environment**. Two reasons: (a) the only local interpreter is Python 3.9, while
-> the package requires ≥ 3.11 (the code uses `typing.Self`), so `queryshield`
-> cannot be imported locally; and (b) the sandbox's command-safety classifier is
-> intermittently unavailable, so Bash invocations are refused. The **CI workflow**
-> (`.github/workflows/ci.yml`) is the authoritative gate: it runs the full
-> quality matrix on Python 3.11–3.13 and the integration tests against a
-> `postgres:16` service container. Phase 3 therefore stays 🚧 until that gate has
-> actually run green. This is recorded honestly rather than assumed.
+> environment**: the only local interpreter is Python 3.9 while the package
+> requires ≥ 3.11 (so `queryshield` cannot be imported locally) and pglast is not
+> installed, and the sandbox's command-safety classifier is intermittently
+> unavailable, so Bash invocations are refused. The **CI workflow**
+> (`.github/workflows/ci.yml`) is the authoritative gate: it runs the full quality
+> matrix on Python 3.11–3.13 and the integration tests against a `postgres:16`
+> service container. Phase 4 therefore stays 🚧 until that gate has actually run
+> green. This is recorded honestly rather than assumed.
 
 ---
 
@@ -131,7 +138,12 @@ Installable, testable project foundation (merged to `main` via PR #1).
 - [x] CI integration job runs them against a `postgres:16` service container
 - [x] **CI gate run green** and merged to `main` via PR #3
 
-### Phase 3 — Dynamic schema introspection 🚧 (built; CI validation pending)
+### Phase 3 — Dynamic schema introspection ✅
+
+> Merged to `main` (PR #4, plus the follow-up fixes folded in via PR #5); the
+> Phase 3 CI gate has run **green** (quality matrix on 3.11–3.13 and the
+> PostgreSQL integration job). The Phase 3 "validation pending" caveat is now
+> resolved.
 
 **3a. Domain model**
 - [x] Frozen, slotted dataclasses: `Column`, `PrimaryKey`, `UniqueConstraint`,
@@ -178,13 +190,65 @@ Installable, testable project foundation (merged to `main` via PR #1).
 - [x] Integration against real PostgreSQL with uuid-named temp objects
       (`tests/integration/test_schema_retriever.py`); skips unless
       `QUERYSHIELD_TEST_DATABASE_URL` is set; CI runs them on `postgres:16`
-- [ ] **CI gate actually run green** — pending; see the Validation status note
+- [x] **CI gate run green** and merged to `main` (PR #4 + follow-ups via PR #5)
 
-### Phase 4 — SQL parsing & AST (deterministic security core) ⬜
-- [ ] Parser abstraction + chosen library (see DECISIONS ADR-0003)
-- [ ] AST normalization & identifier resolution
-- [ ] Fail-closed on unparseable input
-- [ ] Adversarial unit tests (feeds SQL strings directly, no LLM)
+### Phase 4 — SQL parsing & AST foundation 🚧 (built; CI validation pending)
+
+**4a. Parser choice & dependency**
+- [x] **pglast** (Python bindings for libpg_query — PostgreSQL's *own* parser)
+      adopted, finalising ADR-0003; pinned `pglast>=6,<8` in `pyproject.toml`
+      (the upper bound stops a future major from silently swapping the bundled
+      grammar). Introduced lazily, so importing QueryShield does not load the
+      compiled extension until a parse is requested.
+
+**4b. Abstraction & owned model**
+- [x] `SQLParser` ABC (`sql/base.py`) with
+      `async parse(sql) -> ParsedQuery`; documents independent structural
+      analysis, fail-closed semantics, verbatim identifiers, and no execution
+- [x] QueryShield-owned model (`sql/models.py`): frozen, slotted `ParsedQuery`
+      plus `TableReference`, `ColumnReference`, `FunctionCall`,
+      `CommonTableExpression`, `SetOperation`, and the `StatementType` /
+      `JoinType` / `SetOperationType` enums — never a pglast type (ADR-0029)
+- [x] No safety verdict anywhere in the model: no `is_safe` / `allowed` field or
+      property; a well-formed `DROP` is structure, not a claim (ADR-0029)
+
+**4c. PostgreSQL parser (pglast)**
+- [x] `PostgreSQLSQLParser` (`sql/postgres.py`) — stateless, no DB session, no
+      execution; reflective AST walk over node `__slots__`, dispatching on the
+      node class name (depends only on pglast's stable surface)
+- [x] Statement classification **from the AST** (`StatementType`), including the
+      fail-safe `UNKNOWN` bucket — never `str.startswith`, never regex, never a
+      text scan (ADR-0030)
+- [x] Multi-statement detection from the number of parsed statements — never
+      `sql.split(";")`; a batch is represented, never truncated (ADR-0030)
+- [x] References extracted: tables (schema / name / alias), columns (incl. `*`),
+      functions (schema-qualified), joins, CTEs, subqueries, parameters vs.
+      literals, and the SELECT feature flags (DISTINCT, GROUP BY, HAVING,
+      ORDER BY, LIMIT/OFFSET, window functions, locking clause)
+- [x] CTE reference separated from physical relations: a bare `FROM sales` whose
+      name matches a `WITH` CTE is not reported as a table
+- [x] Identifiers preserved **verbatim** — original case / quoting / Unicode; no
+      case-folding (ADR-0026 / ADR-0032); original SQL retained unchanged
+- [x] Fail-closed: any unparseable input raises a `SQLParseError` with the
+      vendor parser's exception chained as `__cause__`; never a partial result,
+      never a dialect retry (ADR-0031); non-string input and empty /
+      comment-only input also raise
+- [x] `SQLParseError(QueryShieldError)` added to `errors.py`, exported at the
+      package root; parser internals (`PostgreSQLSQLParser`, `ParsedQuery`) are
+      **not** top-level exports — they live under `queryshield.sql`
+
+**4d. Tests**
+- [x] Model unit tests (`tests/unit/test_sql_models.py`): immutability, verbatim
+      identifiers, deterministic dedup views, and the absence of any safety
+      verdict
+- [x] Parser unit tests (`tests/unit/test_sql_parser.py`): AST-driven
+      classification per statement kind, the `UNKNOWN` bucket, a leading comment
+      that must not fool classification, table/alias/column/function extraction,
+      CTE separation, join and UNION/UNION-ALL distinction, subqueries,
+      parameters vs. literals, SELECT feature flags, multi-statement detection,
+      a semicolon inside a string literal, adversarial fail-closed inputs,
+      `__cause__` chaining, determinism, and no-verdict
+- [ ] **CI gate actually run green** — pending; see the Validation status note.
 
 ### Phase 5 — Deterministic policy engine ⬜
 - [ ] `PolicyEngine` composing `PolicyRule`s from config
@@ -237,15 +301,17 @@ Installable, testable project foundation (merged to `main` via PR #1).
 ## Implemented modules
 
 - `queryshield` (`src/queryshield/__init__.py`) — package root. `__version__` is
-  now **`0.3.0`**. Curated public API: `__version__`, `DatabaseConfig`,
-  `QueryShieldConfig`, `load_config`, and the eight error types. Installs a
-  `NullHandler` on the `queryshield` logger. Concrete adapters (`PostgreSQLAdapter`,
-  `PostgreSQLSchemaRetriever`) are **not** re-exported here.
+  now **`0.4.0`**. Curated public API: `__version__`, `DatabaseConfig`,
+  `QueryShieldConfig`, `load_config`, and the nine error types. Installs a
+  `NullHandler` on the `queryshield` logger. Concrete adapters
+  (`PostgreSQLAdapter`, `PostgreSQLSchemaRetriever`) and the parser
+  (`PostgreSQLSQLParser`) are **not** re-exported here.
 - `queryshield.errors` — typed exception hierarchy: `QueryShieldError` (root) →
   `ConfigError`, `DatabaseError` → `DatabaseConnectionError` /
-  `DatabaseExecutionError`, and `SchemaError` → `SchemaRetrievalError` /
+  `DatabaseExecutionError`, `SchemaError` → `SchemaRetrievalError` /
   `SchemaMetadataError` (the schema hierarchy is **not** a `DatabaseError`
-  subclass). No secrets or raw driver text in messages.
+  subclass), and `SQLParseError` (its own branch, not a `DatabaseError` /
+  `SchemaError`). No secrets or raw driver text in messages.
 - `queryshield.config` — `pydantic` v2 `DatabaseConfig` / `QueryShieldConfig`
   models and the deterministic `load_config()` loader (layer precedence, YAML
   `${VAR}` interpolation, fail-closed validation, `SecretStr` secrets).
@@ -261,9 +327,16 @@ Installable, testable project foundation (merged to `main` via PR #1).
   adapter; one read-only transaction of six bounded, parameterised `pg_catalog`
   queries; `has_table_privilege`-filtered; fail-closed). Re-exports the models,
   `SchemaRetriever`, `SchemaFilter`, and `PostgreSQLSchemaRetriever`.
+- `queryshield.sql` (`base.py`, `models.py`, `postgres.py`) — the `SQLParser`
+  ABC (`async parse() -> ParsedQuery`), the QueryShield-owned frozen model
+  (`ParsedQuery` + supporting types + `StatementType` / `JoinType` /
+  `SetOperationType`), and the `PostgreSQLSQLParser` built on pglast
+  (libpg_query). AST-driven classification and multi-statement detection;
+  fail-closed `SQLParseError`; verbatim identifiers; no execution, no DB session,
+  no security decision.
 
-No other modules exist. The LLM provider, SQL parser, policy engine, rewriter,
-cost checks, cache, audit, and the orchestrator/pipeline described in
+No other modules exist. The LLM provider, policy engine, rewriter, cost checks,
+cache, audit, and the orchestrator/pipeline described in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) are still unimplemented.
 
 ## Tests implemented
@@ -291,6 +364,19 @@ Unit tests (`tests/unit/`, run with `pytest -m "not integration"`):
   runs in one read-only transaction; selected names are passed as a bound
   parameter; a failing query becomes a chained `SchemaRetrievalError`; a
   connection failure propagates unchanged; an empty selection short-circuits.
+- `test_sql_models.py` — the parsed-SQL model in isolation (no pglast, no
+  database): frozen dataclasses, verbatim identifiers, deterministic dedup
+  views (`table_names` / `cte_names` / `function_names`), `is_multi_statement`,
+  enum coverage, and the deliberate **absence** of any safety verdict.
+- `test_sql_parser.py` — the real pglast parser (in-process, deterministic, no
+  database): AST-driven classification for each statement kind and the
+  `UNKNOWN` bucket, a leading comment that must not fool classification,
+  schema-qualified tables / aliases, verbatim identifiers, column and `*`
+  extraction, qualified functions, CTE-vs-physical separation, join types,
+  `UNION` vs `UNION ALL`, subquery flag, parameters vs. literals, SELECT
+  feature flags, locking clause, multi-statement detection, a semicolon inside a
+  string literal, adversarial fail-closed inputs (incl. empty / comment-only),
+  `__cause__` chaining, non-string rejection, determinism, and no-verdict.
 
 Integration tests (`tests/integration/`, run with `pytest -m integration`):
 - `test_postgres_adapter.py` — nine tests against a real PostgreSQL: health
@@ -314,12 +400,12 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
 
 ---
 
-## Known limitations (as of Phase 3)
+## Known limitations (as of Phase 4)
 
 - The repository implements **only** the configuration system, the database
-  foundation, and dynamic schema introspection. There is **no** LLM integration,
-  SQL parsing, policy engine, rewriting, cost checks, cache, execution path for
-  arbitrary user/LLM SQL, audit, or API.
+  foundation, dynamic schema introspection, and the SQL parsing foundation.
+  There is **no** LLM integration, policy engine, rewriting, cost checks, cache,
+  execution path for arbitrary user/LLM SQL, audit, or API.
 - Schema introspection is **not** yet scoped by a per-request `RequestContext`
   principal (deferred, ADR-0028). The retriever filters relations by the
   `has_table_privilege` of the **single configured DSN role**, and schema
@@ -332,12 +418,27 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
   Principal→least-privilege-role mapping and RLS-scoped execution are **not**
   implemented (Phase 10); the adapter is the executor primitive those phases
   will build on.
-- Phase 3 validation (running the toolchain) has **not** been executed in this
+- The SQL parser **describes** structure only. It does **not** resolve references
+  against a catalog, and it makes no security decision. Deliberate, accepted
+  limitations in this phase:
+  - DDL target names (e.g. the table in `DROP TABLE x` / `ALTER TABLE x`) are not
+    lowered to `TableReference` — the AST names them through a different node
+    shape than a `FROM` reference, and modelling DDL targets is a later concern.
+  - An implicit comma join is not represented as a `JoinType`, and a `CROSS JOIN`
+    is reported as `INNER` — PostgreSQL represents both with the same join node.
+    The referenced tables themselves are still captured (both sides of `FROM a, b`
+    appear in `tables`); only the join-*type* distinction is not modelled, and it
+    remains recoverable from the original SQL, which the parser retains.
+  - No query **fingerprint** yet (deliberately deferred, ADR-0032).
+- The pglast AST walk reads node `__slots__` reflectively rather than using a
+  typed `Visitor`; this is a deliberate robustness choice (it depends only on
+  pglast's stable surface) and is covered by the parser unit tests.
+- Phase 4 validation (running the toolchain) has **not** been executed in this
   environment: the local interpreter is Python 3.9 while the package requires
-  ≥ 3.11 (so `queryshield` cannot be imported), and the Bash command-safety
-  classifier is intermittently unavailable. CI is the authoritative gate and has
-  not yet been confirmed green for the Phase 3 branch. (Phase 2 is green via PR #3.)
-- The SQL parsing library is still not finalized (ADR-0003, open).
+  ≥ 3.11 (so `queryshield` cannot be imported), pglast is not installed locally,
+  and the Bash command-safety classifier is intermittently unavailable. CI is the
+  authoritative gate and has not yet been confirmed green for the Phase 4 branch.
+  (Phases 2 and 3 are green.)
 - The async execution model is the only one shipped; there is intentionally no
   sync adapter (ADR-0019).
 
@@ -352,15 +453,20 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
 - **Remaining abstract interfaces** (`LLMProvider`, `CacheBackend`, `PolicyRule`,
   `AuditStore`, `EventPublisher`) and `RequestContext` — not created up-front;
   each is introduced in the phase that gives it a first real consumer (avoid
-  speculative abstraction). (`SchemaRetriever` was introduced in Phase 3.)
+  speculative abstraction). (`SchemaRetriever` was introduced in Phase 3, and
+  `SQLParser` in Phase 4.)
 - **Binding schema introspection to a principal** — a per-request
   `RequestContext` and a dedicated `SchemaConfig` section are deferred; Phase 3
   ships the retriever with a directly-constructed `SchemaFilter` and
   `has_table_privilege`-based filtering only (ADR-0028).
-- **All remaining QueryShield security/execution functionality** — Phases 4–12.
-- **Mistral client, SQL parser, Redis** runtime dependencies — each is introduced
-  only in the phase that actually needs it (ADR-0012). (psycopg 3 and pydantic/
-  PyYAML were added in Phase 2 because the config + DB foundations consume them.)
+- **A query fingerprint** — a deterministic fingerprint of a *parsed query* (as
+  opposed to the schema fingerprint of ADR-0027) is deliberately deferred until
+  the cache/cost layers need it (ADR-0032).
+- **All remaining QueryShield security/execution functionality** — Phases 5–12.
+- **Mistral client and Redis** runtime dependencies — each is introduced only in
+  the phase that actually needs it (ADR-0012). (psycopg 3 and pydantic/PyYAML
+  were added in Phase 2; pglast was added in Phase 4 because the parsing
+  foundation consumes it.)
 - **CLI / `__main__` entry point** — deferred until there is behavior to expose
   (ADR-0015).
 - **LICENSE / open-source license selection** — deferred to the repository

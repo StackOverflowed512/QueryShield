@@ -1,20 +1,23 @@
 """QueryShield — secure, auditable text-to-SQL infrastructure for PostgreSQL.
 
-**Phase 3** adds dynamic PostgreSQL **schema introspection**: a
-:class:`~queryshield.schema.SchemaRetriever` abstraction with a concrete
-PostgreSQL implementation that turns a live database into an immutable
-:class:`~queryshield.schema.SchemaCatalog` snapshot (on top of the Phase 2
-configuration foundation and database adapter). The remaining deterministic
-security pipeline (SQL parsing/AST, policy engine, rewriting, cost checks), the
-Mistral provider, caching, and audit are still **not** implemented — see
-``docs/IMPLEMENTATION_STATUS.md`` for the authoritative status and
+**Phase 4** adds the deterministic **SQL parsing & AST foundation**: a
+:class:`~queryshield.sql.SQLParser` abstraction with a concrete PostgreSQL
+implementation that independently parses a candidate SQL string into a
+QueryShield-owned, strongly-typed structure (statement kind, referenced tables
+and columns, joins, CTEs, set operations, parameters, and so on). The parser
+*describes* structure — it makes no security decision and never executes SQL.
+
+The remaining deterministic security pipeline (policy engine, rewriting, cost
+checks), the Mistral provider, caching, and audit are still **not** implemented
+— see ``docs/IMPLEMENTATION_STATUS.md`` for the authoritative status and
 ``docs/ARCHITECTURE.md`` for the intended design.
 
 The public API is intentionally small: the validated configuration model and its
 loader, and the typed error hierarchy. The database adapter lives under
-:mod:`queryshield.db` and the schema types under :mod:`queryshield.schema`,
-because each is a lower-level component (see the trust boundary in
-``docs/ARCHITECTURE.md``), not a user-facing query API.
+:mod:`queryshield.db`, the schema types under :mod:`queryshield.schema`, and the
+parsing types under :mod:`queryshield.sql`, because each is a lower-level
+component (see the trust boundary in ``docs/ARCHITECTURE.md``), not a
+user-facing query API.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from queryshield.errors import (
     SchemaError,
     SchemaMetadataError,
     SchemaRetrievalError,
+    SQLParseError,
 )
 
 __all__ = [
@@ -41,6 +45,7 @@ __all__ = [
     "DatabaseExecutionError",
     "QueryShieldConfig",
     "QueryShieldError",
+    "SQLParseError",
     "SchemaError",
     "SchemaMetadataError",
     "SchemaRetrievalError",
@@ -52,7 +57,7 @@ __all__ = [
 #: reads this literal at build time — see ``[tool.hatch.version]`` in
 #: ``pyproject.toml`` — so the installed distribution's metadata and this value
 #: never drift.
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Library best practice: attach a no-op handler so importing QueryShield never
 # emits "No handlers could be found" warnings and never configures logging on the
