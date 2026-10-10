@@ -84,12 +84,35 @@ async def test_schema_qualified_table_and_alias_are_preserved() -> None:
     # `Customers` is written unquoted, so PostgreSQL's grammar folds it to
     # `customers` while parsing — the parser faithfully reports that folded form.
     # (Case preservation for *quoted* identifiers is covered separately.)
+    # table_names is schema-qualified, so a schema-qualified relation is not
+    # collapsed to a bare name.
     parsed = await _parser().parse("SELECT c.id FROM analytics.Customers AS c")
-    assert parsed.table_names == ("customers",)
+    assert parsed.table_names == ("analytics.customers",)
     table = parsed.tables[0]
     assert table.schema == "analytics"
     assert table.name == "customers"
     assert table.alias == "c"
+
+
+@pytest.mark.unit
+async def test_same_name_in_two_schemas_stays_distinct() -> None:
+    # public.users and sales.users are different relations; table_names must keep
+    # them apart. Collapsing them to a single "users" would under-report the
+    # relations a cross-schema query touches — a real access path a downstream
+    # policy layer must see.
+    parsed = await _parser().parse("SELECT * FROM public.users, sales.users")
+    assert parsed.table_names == ("public.users", "sales.users")
+
+
+@pytest.mark.unit
+async def test_every_statement_in_a_batch_is_represented() -> None:
+    # A multi-statement batch must be described completely, never truncated to
+    # its first statement (ADR-0031). Both relations are reported, and the batch
+    # is flagged.
+    parsed = await _parser().parse("SELECT a FROM t1; SELECT b FROM t2")
+    assert parsed.statement_count == 2
+    assert parsed.is_multi_statement is True
+    assert parsed.table_names == ("t1", "t2")
 
 
 @pytest.mark.unit

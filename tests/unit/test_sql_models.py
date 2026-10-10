@@ -104,6 +104,23 @@ def test_table_names_deduplicates_and_preserves_first_seen_order() -> None:
 
 
 @pytest.mark.unit
+def test_table_names_keep_schema_qualified_relations_distinct() -> None:
+    # Two same-named relations in different schemas are different objects; the
+    # derived view must not collapse them to one bare name (that would hide a
+    # relation a downstream policy layer needs to see). A bare-named relation is
+    # returned unqualified, a schema-qualified one keeps its schema.
+    parsed = _query(
+        tables=(
+            TableReference(schema="public", name="users"),
+            TableReference(schema="sales", name="users"),
+            TableReference(schema=None, name="users"),
+            TableReference(schema="public", name="users"),
+        ),
+    )
+    assert parsed.table_names == ("public.users", "sales.users", "users")
+
+
+@pytest.mark.unit
 def test_cte_names_deduplicates_in_first_seen_order() -> None:
     parsed = _query(
         ctes=(
