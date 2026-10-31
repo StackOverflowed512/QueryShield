@@ -881,3 +881,33 @@
   captured; each addition is additive and typed. Phase 4 deliberately does **not**
   compute any fingerprint over queries (ADR-0027 covers the *schema*); a query
   fingerprint, if wanted, is deferred to the phase that has a reason for it.
+
+
+---
+
+## ADR-0033 — Parsed read-only structure signals are tree-wide facts, not verdicts
+- **Status:** Accepted (Phase 5 parser prerequisite)
+- **Date:** 2026-10-31
+- **Context:** Phase 4 classifies the outer statement, but a top-level SELECT can
+  contain data-modifying CTEs, nested SELECT INTO clauses, or nested row-locking
+  clauses. The existing outermost-only locking feature flag is insufficient for
+  a later read-only policy rule. The reflective AST walk already visits these
+  nodes.
+- **Decision:** Add three additive, false-defaulted structural booleans to
+  ParsedQuery: contains_data_modifying_statement, has_select_into, and
+  contains_locking_clause. Record INSERT/UPDATE/DELETE/MERGE nodes and SELECT
+  INTO / locking-clause presence while walking every node of every parsed
+  top-level statement. Preserve has_locking_clause as the existing outermost
+  SELECT feature flag. These fields describe syntax only and make no policy
+  decision.
+- **Alternatives considered:** (a) Infer read-only behavior from the outer
+  statement type — rejected; it misses data-modifying CTEs and nested SELECT
+  constructs. (b) Put policy verdicts on ParsedQuery — rejected; parsing and
+  authorization remain separate. (c) Reparse or scan SQL text downstream —
+  rejected; structural facts belong in AST lowering.
+- **Reason:** A later deterministic policy rule needs tree-wide signals without
+  depending on pglast types or textual heuristics.
+- **Consequences:** The fields are additive and backward-compatible for callers
+  using defaults. They do not prove every SELECT harmless; volatile functions
+  and database privileges remain separate concerns. Tests cover nested CTEs,
+  set-operation branches, top-level DML, SELECT INTO, nested locking, and SELECT.

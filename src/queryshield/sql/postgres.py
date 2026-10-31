@@ -214,8 +214,15 @@ class _Analyzer:
         self.literal_count = 0
         self.has_subqueries = False
         self.has_window_functions = False
+        self.contains_data_modifying_statement = False
+        self.has_select_into = False
+        self.contains_locking_clause = False
         self._visitors = {
             "RangeVar": self._visit_range_var,
+            "InsertStmt": self._visit_data_modifying_statement,
+            "UpdateStmt": self._visit_data_modifying_statement,
+            "DeleteStmt": self._visit_data_modifying_statement,
+            "MergeStmt": self._visit_data_modifying_statement,
             "CommonTableExpr": self._visit_common_table_expr,
             "ColumnRef": self._visit_column_ref,
             "FuncCall": self._visit_func_call,
@@ -317,7 +324,20 @@ class _Analyzer:
         key = name if isinstance(name, str) else ""
         self.joins.append(_JOIN_TYPES.get(key, JoinType.OTHER))
 
+    def _visit_data_modifying_statement(self, node: Any) -> None:
+        """Record a DML statement node anywhere in the walked AST."""
+        self.contains_data_modifying_statement = True
+
     def _visit_select_stmt(self, node: Any) -> None:
+        # These structural signals are tree-wide and are deliberately recorded
+        # before the set-operation early return.
+        self.has_select_into = self.has_select_into or getattr(
+            node, "intoClause", None
+        ) is not None
+        self.contains_locking_clause = self.contains_locking_clause or getattr(
+            node, "lockingClause", None
+        ) is not None
+
         # In a *raw* parse tree a set operation (UNION/INTERSECT/EXCEPT) is a
         # SelectStmt whose ``op`` is not ``SETOP_NONE``, with the two operands in
         # ``larg``/``rarg``. libpg_query only lowers this into a distinct
@@ -399,6 +419,9 @@ class PostgreSQLSQLParser(SQLParser):
         literal_count = 0
         has_subqueries = False
         has_window_functions = False
+        contains_data_modifying_statement = False
+        has_select_into = False
+        contains_locking_clause = False
 
         for statement in statements:
             root = getattr(statement, "stmt", None)
@@ -429,9 +452,17 @@ class PostgreSQLSQLParser(SQLParser):
             literal_count += analyzer.literal_count
             has_subqueries = has_subqueries or analyzer.has_subqueries
             has_window_functions = has_window_functions or analyzer.has_window_functions
+            contains_data_modifying_statement = (
+                contains_data_modifying_statement
+                or analyzer.contains_data_modifying_statement
+            )
+            has_select_into = has_select_into or analyzer.has_select_into
+            contains_locking_clause = (
+                contains_locking_clause or analyzer.contains_locking_clause
+            )
 
-        # The structural flags describe the whole input: a flag is set when the
-        # feature appears in *any* statement's outermost query.
+        # The existing feature flags below describe outermost SELECTs. The new
+        # structural signals above describe every node in every statement.
         outers = [_outer_select(root) for root in roots]
 
         return ParsedQuery(
@@ -458,4 +489,7 @@ class PostgreSQLSQLParser(SQLParser):
             has_offset=any(_present(o, "limitOffset") for o in outers),
             has_window_functions=has_window_functions,
             has_locking_clause=any(_present(o, "lockingClause") for o in outers),
+            contains_data_modifying_statement=contains_data_modifying_statement,
+            has_select_into=has_select_into,
+            contains_locking_clause=contains_locking_clause,
         )

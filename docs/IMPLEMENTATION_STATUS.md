@@ -2,7 +2,7 @@
 
 > **This file is the authoritative source of truth for what actually exists.**
 > If any other document implies a feature works, this file overrides it.
-> Last updated: **2026-10-08** (Phase 4 — SQL parsing & AST foundation).
+> Last updated: **2026-10-31** (Phase 5 parser prerequisite).
 
 Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (intentional)
 
@@ -10,7 +10,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (inte
 
 ## Current phase
 
-**Phase 4 — SQL parsing & AST foundation.** 🚧 (built; CI validation pending)
+**Phase 5 — parser read-only signals prerequisite.** 🚧 (this PR).
 
 Phases 1 (installable, testable project skeleton), 2 (configuration system +
 PostgreSQL adapter foundation), and 3 (dynamic schema introspection) are complete
@@ -40,19 +40,10 @@ LLM-supplied* SQL. The parser only *describes* structure: it makes **no** securi
 or authorization decision, performs no NL→SQL generation, and never executes
 candidate SQL.
 
-> **⚠️ Validation status (read this before trusting the checkmarks below):**
-> Phases 1–3 are merged and green in CI. The Phase 4 source and tests have been
-> **written**, but the mandated "actually run the tooling" validation —
-> `pip install -e ".[dev]"`, `pytest -m "not integration"`, `ruff check .`,
-> `ruff format --check .`, `mypy` — has **not yet been executed in this
-> environment**: the only local interpreter is Python 3.9 while the package
-> requires ≥ 3.11 (so `queryshield` cannot be imported locally) and pglast is not
-> installed, and the sandbox's command-safety classifier is intermittently
-> unavailable, so Bash invocations are refused. The **CI workflow**
-> (`.github/workflows/ci.yml`) is the authoritative gate: it runs the full quality
-> matrix on Python 3.11–3.13 and the integration tests against a `postgres:16`
-> service container. Phase 4 therefore stays 🚧 until that gate has actually run
-> green. This is recorded honestly rather than assumed.
+> **Validation status:** Phase 4's CI gate ran green on Python 3.11–3.13 and
+> against the PostgreSQL 16 service on merged commit
+> [`1e52092`](https://github.com/StackOverflowed512/QueryShield/commit/1e52092fc35fc1f84eab1c6cce3f12eff4e4b23a).
+> The CI workflow is authoritative; this does not claim local execution here.
 
 ---
 
@@ -192,7 +183,10 @@ Installable, testable project foundation (merged to `main` via PR #1).
       `QUERYSHIELD_TEST_DATABASE_URL` is set; CI runs them on `postgres:16`
 - [x] **CI gate run green** and merged to `main` (PR #4 + follow-ups via PR #5)
 
-### Phase 4 — SQL parsing & AST foundation 🚧 (built; CI validation pending)
+### Phase 4 — SQL parsing & AST foundation ✅
+
+Merged to `main` via PR #6. The CI quality matrix and PostgreSQL integration
+job ran green on commit `1e52092` (Python 3.11–3.13 + PostgreSQL 16).
 
 **4a. Parser choice & dependency**
 - [x] **pglast** (Python bindings for libpg_query — PostgreSQL's *own* parser)
@@ -248,9 +242,19 @@ Installable, testable project foundation (merged to `main` via PR #1).
       parameters vs. literals, SELECT feature flags, multi-statement detection,
       a semicolon inside a string literal, adversarial fail-closed inputs,
       `__cause__` chaining, determinism, and no-verdict
-- [ ] **CI gate actually run green** — pending; see the Validation status note.
+- [x] **CI gate actually run green** — confirmed on merged commit `1e52092`
+      (Python 3.11–3.13 + PostgreSQL 16).
 
-### Phase 5 — Deterministic policy engine ⬜
+### Phase 5 — Deterministic policy engine 🚧
+
+**5a. Parser prerequisite (this PR)**
+- [x] Add tree-wide structural signals for DML, SELECT INTO, and row-locking
+      constructs to the immutable `ParsedQuery` model.
+- [x] Exercise nested CTEs, subqueries, set-operation branches, and top-level
+      DML with real pglast parser tests.
+- [ ] CI gate for this prerequisite green.
+
+**5b. Policy engine (subsequent PRs; not implemented here)**
 - [ ] `PolicyEngine` composing `PolicyRule`s from config
 - [ ] Core rules: statement-type allowlist, table/column access vs. schema+grants,
       forbidden constructs, JOIN/subquery-depth limits
@@ -393,10 +397,8 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
   sensitivity; a connection failure raising (never an empty catalog). Skips when
   `QUERYSHIELD_TEST_DATABASE_URL` is unset.
 
-> These tests have been **written** but **not yet executed in this environment**
-> (see the Validation status note: Bash classifier unavailable + local Python is
-> 3.9 while the package needs ≥ 3.11). CI is the authoritative run. Do not read
-> their presence as a passing run until CI has actually run them.
+> The Phase 4 CI workflow ran green on merged commit `1e52092`; see the
+> validation record above.
 
 ---
 
@@ -433,20 +435,17 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
 - The pglast AST walk reads node `__slots__` reflectively rather than using a
   typed `Visitor`; this is a deliberate robustness choice (it depends only on
   pglast's stable surface) and is covered by the parser unit tests.
-- Phase 4 validation (running the toolchain) has **not** been executed in this
-  environment: the local interpreter is Python 3.9 while the package requires
-  ≥ 3.11 (so `queryshield` cannot be imported), pglast is not installed locally,
-  and the Bash command-safety classifier is intermittently unavailable. CI is the
-  authoritative gate and has not yet been confirmed green for the Phase 4 branch.
-  (Phases 2 and 3 are green.)
+- Phase 4's CI gate is confirmed green on merged `main` commit `1e52092`
+  (Python 3.11–3.13 + PostgreSQL 16). The historical local-tooling limitation
+  does not override that CI evidence.
 - The async execution model is the only one shipped; there is intentionally no
   sync adapter (ADR-0019).
 
 ## Technical debt
 
-- None accrued. All code is covered by unit tests (deterministic parts) or
-  integration tests (the PostgreSQL adapter), pending the CI run that executes
-  them.
+- The Phase 5 parser-prerequisite tests in this branch are awaiting their own CI
+  run. Do not treat the new structural signals as validated until that gate is
+  green.
 
 ## Intentionally deferred (⏸️)
 

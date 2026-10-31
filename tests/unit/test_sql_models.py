@@ -158,6 +158,9 @@ def test_defaults_are_the_empty_and_false_forms() -> None:
     assert parsed.has_subqueries is False
     assert parsed.has_distinct is False
     assert parsed.has_locking_clause is False
+    assert parsed.contains_data_modifying_statement is False
+    assert parsed.has_select_into is False
+    assert parsed.contains_locking_clause is False
 
 
 @pytest.mark.unit
