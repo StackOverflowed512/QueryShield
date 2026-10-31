@@ -9,7 +9,7 @@
 
 ## Current status (read carefully)
 
-**Phase: 4 — SQL parsing & AST foundation.**
+**Phase: 5 — parser read-only signals prerequisite (this PR).**
 
 Phases 1 (installable, testable skeleton), 2 (configuration system + PostgreSQL
 adapter foundation, PR #3), and 3 (dynamic PostgreSQL schema introspection,
@@ -36,15 +36,11 @@ and never executes candidate SQL. `ParsedQuery` deliberately carries **no**
 safety verdict. Nothing in this file or in `docs/` should be read as a claim that
 an unimplemented component already works.
 
-> **Validation note:** Phases 2 and 3 are merged and green in CI (PR #3, PR #4,
-> PR #5). The Phase 4 source and tests have been written but **not yet executed
-> in this environment** — the only local interpreter is Python 3.9 while the
-> package requires ≥ 3.11 (so `queryshield` cannot even import locally), pglast
-> is not installed locally, and the sandbox's Bash command-safety classifier is
-> intermittently unavailable. CI (quality matrix on 3.11–3.13 + PostgreSQL
-> integration against `postgres:16`) is the authoritative gate. See the
-> Validation status in
-> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+> **Validation note:** Phase 4's CI gate ran green on merged `main` commit
+> `1e52092` (quality matrix on Python 3.11–3.13 + PostgreSQL integration
+> against `postgres:16`). The parser prerequisite in this PR adds tree-wide
+> structural signals; its own checks must pass CI before that batch is marked
+> complete. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 The authoritative, always-current status is
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). When this

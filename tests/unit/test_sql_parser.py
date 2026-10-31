@@ -271,3 +271,70 @@ async def test_result_carries_no_safety_verdict() -> None:
     assert destructive.statement_type is StatementType.DROP
     assert not hasattr(destructive, "is_safe")
     assert not hasattr(benign, "is_safe")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH changed AS (DELETE FROM target_table RETURNING *) "
+        "SELECT * FROM changed",
+        "SELECT * FROM (WITH outer_cte AS "
+        "(WITH inner_cte AS (UPDATE target_table SET value = 1 RETURNING *) "
+        "SELECT * FROM inner_cte) SELECT * FROM outer_cte) nested_query",
+        "SELECT 1 UNION ALL (WITH changed AS "
+        "(DELETE FROM target_table RETURNING 1) SELECT 1)",
+    ],
+)
+async def test_data_modifying_statements_are_detected_tree_wide(sql: str) -> None:
+    parsed = await _parser().parse(sql)
+    assert parsed.contains_data_modifying_statement is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO target_table (value) VALUES (1)",
+        "UPDATE target_table SET value = 1",
+        "DELETE FROM target_table",
+        "MERGE INTO target_table USING source_table "
+        "ON target_table.id = source_table.id "
+        "WHEN MATCHED THEN UPDATE SET value = source_table.value",
+    ],
+)
+async def test_top_level_data_modifying_statements_are_detected(sql: str) -> None:
+    parsed = await _parser().parse(sql)
+    assert parsed.contains_data_modifying_statement is True
+
+
+@pytest.mark.unit
+async def test_select_into_is_detected() -> None:
+    parsed = await _parser().parse("SELECT id INTO copied_rows FROM source_rows")
+    assert parsed.has_select_into is True
+
+
+@pytest.mark.unit
+async def test_nested_select_into_is_detected_tree_wide() -> None:
+    parsed = await _parser().parse(
+        "SELECT * FROM (SELECT id INTO copied_rows FROM source_rows) nested_query"
+    )
+    assert parsed.has_select_into is True
+
+
+@pytest.mark.unit
+async def test_nested_locking_clause_is_detected_tree_wide() -> None:
+    parsed = await _parser().parse(
+        "SELECT * FROM (SELECT * FROM (SELECT * FROM target_rows "
+        "FOR UPDATE) inner_query) outer_query"
+    )
+    assert parsed.contains_locking_clause is True
+    assert parsed.has_locking_clause is False
+
+
+@pytest.mark.unit
+async def test_plain_select_has_no_side_effecting_structure_flags() -> None:
+    parsed = await _parser().parse("SELECT id FROM ordinary_table")
+    assert parsed.contains_data_modifying_statement is False
+    assert parsed.has_select_into is False
+    assert parsed.contains_locking_clause is False

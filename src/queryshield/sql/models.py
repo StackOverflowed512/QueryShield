@@ -183,6 +183,10 @@ class ParsedQuery:
     has_offset: bool = False
     has_window_functions: bool = False
     has_locking_clause: bool = False
+    # Tree-wide structural signals for later policy rules; these are not verdicts.
+    contains_data_modifying_statement: bool = False
+    has_select_into: bool = False
+    contains_locking_clause: bool = False
 
     @property
     def is_multi_statement(self) -> bool:

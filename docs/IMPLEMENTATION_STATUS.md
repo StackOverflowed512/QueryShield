@@ -2,7 +2,7 @@
 
 > **This file is the authoritative source of truth for what actually exists.**
 > If any other document implies a feature works, this file overrides it.
-> Last updated: **2026-10-08** (Phase 4 — SQL parsing & AST foundation).
+> Last updated: **2026-10-31** (Phase 5 parser prerequisite).
 
 Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (intentional)
 
@@ -10,7 +10,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ deferred (inte
 
 ## Current phase
 
-**Phase 4 — SQL parsing & AST foundation.** 🚧 (built; CI validation pending)
+**Phase 5 — parser read-only signals prerequisite.** 🚧 (this PR).
 
 Phases 1 (installable, testable project skeleton), 2 (configuration system +
 PostgreSQL adapter foundation), and 3 (dynamic schema introspection) are complete
@@ -40,19 +40,10 @@ LLM-supplied* SQL. The parser only *describes* structure: it makes **no** securi
 or authorization decision, performs no NL→SQL generation, and never executes
 candidate SQL.
 
-> **⚠️ Validation status (read this before trusting the checkmarks below):**
-> Phases 1–3 are merged and green in CI. The Phase 4 source and tests have been
-> **written**, but the mandated "actually run the tooling" validation —
-> `pip install -e ".[dev]"`, `pytest -m "not integration"`, `ruff check .`,
-> `ruff format --check .`, `mypy` — has **not yet been executed in this
-> environment**: the only local interpreter is Python 3.9 while the package
-> requires ≥ 3.11 (so `queryshield` cannot be imported locally) and pglast is not
-> installed, and the sandbox's command-safety classifier is intermittently
-> unavailable, so Bash invocations are refused. The **CI workflow**
-> (`.github/workflows/ci.yml`) is the authoritative gate: it runs the full quality
-> matrix on Python 3.11–3.13 and the integration tests against a `postgres:16`
-> service container. Phase 4 therefore stays 🚧 until that gate has actually run
-> green. This is recorded honestly rather than assumed.
+> **Validation status:** Phase 4's CI gate ran green on Python 3.11–3.13 and
+> against the PostgreSQL 16 service on merged commit
+> [`1e52092`](https://github.com/StackOverflowed512/QueryShield/commit/1e52092fc35fc1f84eab1c6cce3f12eff4e4b23a).
+> The CI workflow is authoritative; this does not claim local execution here.
 
 ---
 
@@ -248,9 +239,19 @@ Installable, testable project foundation (merged to `main` via PR #1).
       parameters vs. literals, SELECT feature flags, multi-statement detection,
       a semicolon inside a string literal, adversarial fail-closed inputs,
       `__cause__` chaining, determinism, and no-verdict
-- [ ] **CI gate actually run green** — pending; see the Validation status note.
+- [x] **CI gate actually run green** — confirmed on merged commit `1e52092`
+      (Python 3.11–3.13 + PostgreSQL 16).
 
-### Phase 5 — Deterministic policy engine ⬜
+### Phase 5 — Deterministic policy engine 🚧
+
+**5a. Parser prerequisite (this PR)**
+- [x] Add tree-wide structural signals for DML, SELECT INTO, and row-locking
+      constructs to the immutable `ParsedQuery` model.
+- [x] Exercise nested CTEs, subqueries, set-operation branches, and top-level
+      DML with real pglast parser tests.
+- [ ] CI gate for this prerequisite green.
+
+**5b. Policy engine (subsequent PRs; not implemented here)**
 - [ ] `PolicyEngine` composing `PolicyRule`s from config
 - [ ] Core rules: statement-type allowlist, table/column access vs. schema+grants,
       forbidden constructs, JOIN/subquery-depth limits
