@@ -183,7 +183,10 @@ Installable, testable project foundation (merged to `main` via PR #1).
       `QUERYSHIELD_TEST_DATABASE_URL` is set; CI runs them on `postgres:16`
 - [x] **CI gate run green** and merged to `main` (PR #4 + follow-ups via PR #5)
 
-### Phase 4 — SQL parsing & AST foundation 🚧 (built; CI validation pending)
+### Phase 4 — SQL parsing & AST foundation ✅
+
+Merged to `main` via PR #6. The CI quality matrix and PostgreSQL integration
+job ran green on commit `1e52092` (Python 3.11–3.13 + PostgreSQL 16).
 
 **4a. Parser choice & dependency**
 - [x] **pglast** (Python bindings for libpg_query — PostgreSQL's *own* parser)
@@ -394,10 +397,8 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
   sensitivity; a connection failure raising (never an empty catalog). Skips when
   `QUERYSHIELD_TEST_DATABASE_URL` is unset.
 
-> These tests have been **written** but **not yet executed in this environment**
-> (see the Validation status note: Bash classifier unavailable + local Python is
-> 3.9 while the package needs ≥ 3.11). CI is the authoritative run. Do not read
-> their presence as a passing run until CI has actually run them.
+> The Phase 4 CI workflow ran green on merged commit `1e52092`; see the
+> validation record above.
 
 ---
 
@@ -434,20 +435,17 @@ Integration tests (`tests/integration/`, run with `pytest -m integration`):
 - The pglast AST walk reads node `__slots__` reflectively rather than using a
   typed `Visitor`; this is a deliberate robustness choice (it depends only on
   pglast's stable surface) and is covered by the parser unit tests.
-- Phase 4 validation (running the toolchain) has **not** been executed in this
-  environment: the local interpreter is Python 3.9 while the package requires
-  ≥ 3.11 (so `queryshield` cannot be imported), pglast is not installed locally,
-  and the Bash command-safety classifier is intermittently unavailable. CI is the
-  authoritative gate and has not yet been confirmed green for the Phase 4 branch.
-  (Phases 2 and 3 are green.)
+- Phase 4's CI gate is confirmed green on merged `main` commit `1e52092`
+  (Python 3.11–3.13 + PostgreSQL 16). The historical local-tooling limitation
+  does not override that CI evidence.
 - The async execution model is the only one shipped; there is intentionally no
   sync adapter (ADR-0019).
 
 ## Technical debt
 
-- None accrued. All code is covered by unit tests (deterministic parts) or
-  integration tests (the PostgreSQL adapter), pending the CI run that executes
-  them.
+- The Phase 5 parser-prerequisite tests in this branch are awaiting their own CI
+  run. Do not treat the new structural signals as validated until that gate is
+  green.
 
 ## Intentionally deferred (⏸️)
 
